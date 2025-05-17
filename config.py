@@ -9,8 +9,8 @@ BASE_DIR = Path(__file__).parent.absolute()
 IMAGES_DIR = BASE_DIR / 'images'
 
 # Таймауты
-DEFAULT_TIMEOUT = 1.5  # Минимальный таймаут между действиями
-LOADING_TIMEOUT = 10   # Таймаут для ожидания загрузки
+DEFAULT_TIMEOUT = 3  # Минимальный таймаут между действиями
+LOADING_TIMEOUT = 14   # Таймаут для ожидания загрузки
 SCREENSHOT_TIMEOUT = 0.5  # Таймаут между скриншотами при поиске изображений
 
 # Настройки игры

@@ -127,14 +127,18 @@ class GameBot:
 
         return self.image.is_template_on_screen(IMAGE_PATHS[image_key], timeout)
 
-    def find_text_on_screen(self, text, region=None, timeout=None):
+    def find_text_on_screen(self, text, region=None, timeout=None,
+                            invert=False, adaptive=False, morph=False):
         """
-        Поиск текста на экране с использованием OCR.
+        Поиск текста на экране с использованием OCR с улучшенным распознаванием.
 
         Args:
             text: искомый текст
             region: область поиска (x, y, w, h) или None для всего экрана
             timeout: максимальное время ожидания в секундах, None - бесконечное ожидание
+            invert: инвертировать изображение перед распознаванием
+            adaptive: использовать адаптивную бинаризацию
+            morph: применять морфологические операции для улучшения распознавания
 
         Returns:
             tuple: (x, y, w, h) координаты и размеры найденного текста или None
@@ -147,10 +151,9 @@ class GameBot:
         start_time = time.time()
         attempt = 0
 
-        # Бесконечный цикл, если timeout=None, иначе ограниченный по времени
         while timeout is None or time.time() - start_time < timeout:
             attempt += 1
-            if attempt % 10 == 0:  # Логируем каждые 10 попыток для уменьшения спама в логах
+            if attempt % 10 == 0:
                 elapsed_time = int(time.time() - start_time)
                 self.logger.info(f"Ожидание текста '{text}' продолжается {elapsed_time} секунд...")
 
@@ -172,32 +175,142 @@ class GameBot:
                 roi = gray
                 x, y = 0, 0
 
-            # Бинаризация изображения для улучшения OCR
+            # Список обработанных изображений для OCR
+            processed_images = []
+
+            # Гистограммное выравнивание
+            equalized = cv2.equalizeHist(roi)
+            processed_images.append(equalized)
+
+            # Стандартная бинаризация
             _, binary = cv2.threshold(roi, 150, 255, cv2.THRESH_BINARY_INV)
+            processed_images.append(binary)
+
+            # Стандартная бинаризация на выровненном изображении
+            _, binary_eq = cv2.threshold(equalized, 150, 255, cv2.THRESH_BINARY_INV)
+            processed_images.append(binary_eq)
+
+            # Инвертированная бинаризация
+            if invert:
+                _, binary_inv = cv2.threshold(roi, 150, 255, cv2.THRESH_BINARY)
+                processed_images.append(binary_inv)
+
+                # Инвертированная бинаризация на выровненном изображении
+                _, binary_eq_inv = cv2.threshold(equalized, 150, 255, cv2.THRESH_BINARY)
+                processed_images.append(binary_eq_inv)
+
+            # Адаптивная бинаризация
+            if adaptive:
+                binary_adaptive = cv2.adaptiveThreshold(
+                    roi, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                    cv2.THRESH_BINARY_INV, 11, 2
+                )
+                processed_images.append(binary_adaptive)
+
+                # Инвертированная адаптивная бинаризация
+                binary_adaptive_inv = cv2.adaptiveThreshold(
+                    roi, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                    cv2.THRESH_BINARY, 11, 2
+                )
+                processed_images.append(binary_adaptive_inv)
+
+            # Морфологические операции
+            if morph:
+                kernel = np.ones((2, 2), np.uint8)
+
+                # Эрозия (утоньшение) - полезно для разделения склеенных символов
+                eroded = cv2.erode(binary, kernel, iterations=1)
+                processed_images.append(eroded)
+
+                # Дилатация (утолщение) - полезно для соединения разорванных символов
+                dilated = cv2.dilate(binary, kernel, iterations=1)
+                processed_images.append(dilated)
+
+                # Открытие (удаление шума)
+                opened = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
+                processed_images.append(opened)
+
+                # Закрытие (заполнение мелких отверстий)
+                closed = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+                processed_images.append(closed)
 
             try:
-                # Распознавание текста с помощью Tesseract
                 import pytesseract
-                result = pytesseract.image_to_string(binary, lang='rus+eng')
 
-                # Поиск текста в результате
-                if text.lower() in result.lower():
-                    self.logger.info(f"Текст '{text}' найден на экране после {attempt} попыток")
+                # Пробуем распознать текст на всех обработанных изображениях
+                for img_index, img in enumerate(processed_images):
+                    result = pytesseract.image_to_string(img, lang='rus+eng')
 
-                    # Для простоты возвращаем центр области
-                    if region:
-                        return (region[0] + region[2] // 2, region[1] + region[3] // 2, region[2], region[3])
-                    else:
-                        h, w = screenshot.shape[:2]
-                        return (w // 2, h // 2, w, h)
+                    # Дополнительная обработка результата для повышения шансов совпадения
+                    result_lower = result.lower()
+                    text_lower = text.lower()
+
+                    # Проверка на точное соответствие
+                    if text_lower in result_lower:
+                        self.logger.info(f"Текст '{text}' найден на экране (метод {img_index}) после {attempt} попыток")
+
+                        # Для простоты возвращаем центр области
+                        if region:
+                            return (region[0] + region[2] // 2, region[1] + region[3] // 2, region[2], region[3])
+                        else:
+                            h, w = screenshot.shape[:2]
+                            return (w // 2, h // 2, w, h)
+
+                    # Проверка на нечеткое соответствие (например, для буквы "О" вместо "0")
+                    # Используем расстояние Левенштейна для определения схожести строк
+                    elif text_lower.replace('о', '0') in result_lower or text_lower.replace('0', 'о') in result_lower:
+                        self.logger.info(
+                            f"Текст '{text}' найден с заменой О/0 (метод {img_index}) после {attempt} попыток")
+
+                        if region:
+                            return (region[0] + region[2] // 2, region[1] + region[3] // 2, region[2], region[3])
+                        else:
+                            h, w = screenshot.shape[:2]
+                            return (w // 2, h // 2, w, h)
+
+                    # Проверка на схожесть слов (для пропустить/просутить/пр0пустить и т.д.)
+                    elif self._is_text_similar(text_lower, result_lower, threshold=0.7):
+                        self.logger.info(
+                            f"Текст похожий на '{text}' найден (метод {img_index}) после {attempt} попыток")
+
+                        if region:
+                            return (region[0] + region[2] // 2, region[1] + region[3] // 2, region[2], region[3])
+                        else:
+                            h, w = screenshot.shape[:2]
+                            return (w // 2, h // 2, w, h)
+
             except Exception as e:
                 self.logger.error(f"Ошибка при распознавании текста: {e}")
 
             time.sleep(0.5)
 
-        # Эта часть кода выполнится только если задан timeout
+        # Если текст не найден за отведенное время
         self.logger.warning(f"Текст '{text}' не найден на экране за {timeout} сек")
         return None
+
+    def _is_text_similar(self, text1, text2, threshold=0.7):
+        """
+        Проверка схожести двух текстов с использованием расстояния Левенштейна.
+
+        Args:
+            text1: первый текст
+            text2: второй текст
+            threshold: порог схожести (0-1), где 1 - полное совпадение
+
+        Returns:
+            bool: True если тексты достаточно похожи
+        """
+        try:
+            import Levenshtein
+            # Ищем text1 в text2
+            for word in text2.split():
+                distance = Levenshtein.ratio(text1, word)
+                if distance >= threshold:
+                    return True
+            return False
+        except ImportError:
+            # Если библиотека Levenshtein не доступна, используем простое сравнение
+            return text1 in text2
 
     def wait_for_text(self, text, region=None, timeout=None):
         """
@@ -214,20 +327,24 @@ class GameBot:
         self.logger.info(f"Ожидание появления текста '{text}' на экране")
         return self.find_text_on_screen(text, region, timeout)
 
-    def find_and_click_text(self, text, region=None, timeout=None):
+    def find_and_click_text(self, text, region=None, timeout=None,
+                            invert=False, adaptive=False, morph=False):
         """
-        Поиск текста на экране и клик по нему.
+        Поиск текста на экране и клик по нему с улучшенными опциями распознавания.
 
         Args:
             text: искомый текст
             region: область поиска (x, y, w, h) или None для всего экрана
             timeout: максимальное время ожидания в секундах, None - бесконечное ожидание
+            invert: инвертировать изображение перед распознаванием
+            adaptive: использовать адаптивную бинаризацию
+            morph: применять морфологические операции для улучшения распознавания
 
         Returns:
             bool: True если текст найден и клик выполнен, False иначе
         """
         self.logger.info(f"Поиск и клик по тексту '{text}' на экране")
-        result = self.find_text_on_screen(text, region, timeout)
+        result = self.find_text_on_screen(text, region, timeout, invert, adaptive, morph)
 
         if result:
             x, y, _, _ = result
@@ -385,6 +502,8 @@ class GameBot:
     def find_skip_button(self, max_attempts=None, timeout=None):
         """
         Поиск и клик по кнопке "ПРОПУСТИТЬ".
+        Использует комбинацию методов OCR и обработки изображения для
+        надёжного распознавания на разных фонах.
 
         Args:
             max_attempts: максимальное количество попыток, None - бесконечные попытки
@@ -397,6 +516,7 @@ class GameBot:
 
         # Координаты области, где обычно находится кнопка ПРОПУСТИТЬ
         region = (1040, 12, 200, 60)
+        skip_position = (1142, 42)  # Позиция, где обычно находится кнопка ПРОПУСТИТЬ
 
         attempt = 0
         while max_attempts is None or attempt < max_attempts:
@@ -404,11 +524,126 @@ class GameBot:
             if attempt % 10 == 0:  # Логируем каждые 10 попыток
                 self.logger.info(f"Попытка {attempt} найти кнопку ПРОПУСТИТЬ")
 
-            # Пробуем найти текст ПРОПУСТИТЬ через OCR и нажать на него
-            if self.find_and_click_text("ПРОПУСТИТЬ", region=region, timeout=timeout):
-                return True
+            # Получение скриншота
+            screenshot = self.adb.screenshot()
 
-            # Небольшая пауза между попытками
+            if screenshot is None:
+                time.sleep(0.5)
+                continue
+
+            # Вырезаем область интереса
+            if region:
+                x, y, w, h = region
+                roi = screenshot[y:y + h, x:x + w]
+            else:
+                roi = screenshot
+
+            # Преобразование в оттенки серого
+            gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+
+            # Различные методы обработки для улучшения OCR
+            try:
+                import pytesseract
+
+                # МЕТОД 1: Стандартная бинаризация
+                _, binary = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY_INV)
+                result1 = pytesseract.image_to_string(binary, lang='rus+eng')
+
+                # МЕТОД 2: Инвертированная бинаризация
+                _, binary_inv = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
+                result2 = pytesseract.image_to_string(binary_inv, lang='rus+eng')
+
+                # МЕТОД 3: Адаптивная бинаризация
+                binary_adaptive = cv2.adaptiveThreshold(
+                    gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                    cv2.THRESH_BINARY_INV, 11, 2
+                )
+                result3 = pytesseract.image_to_string(binary_adaptive, lang='rus+eng')
+
+                # МЕТОД 4: Гистограммное выравнивание
+                equalized = cv2.equalizeHist(gray)
+                _, binary_eq = cv2.threshold(equalized, 150, 255, cv2.THRESH_BINARY_INV)
+                result4 = pytesseract.image_to_string(binary_eq, lang='rus+eng')
+
+                # МЕТОД 5: Морфологические операции для удаления шума
+                kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+                morphed = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
+                result5 = pytesseract.image_to_string(morphed, lang='rus+eng')
+
+                # МЕТОД 6: Увеличение масштаба (для улучшения распознавания мелкого текста)
+                resized = cv2.resize(gray, (w * 2, h * 2), interpolation=cv2.INTER_CUBIC)
+                _, binary_resized = cv2.threshold(resized, 150, 255, cv2.THRESH_BINARY_INV)
+                result6 = pytesseract.image_to_string(binary_resized, lang='rus+eng')
+
+                # МЕТОД 7: Повышение контраста
+                alpha = 1.5  # Коэффициент контраста
+                adjusted = cv2.convertScaleAbs(gray, alpha=alpha, beta=0)
+                _, binary_adjusted = cv2.threshold(adjusted, 150, 255, cv2.THRESH_BINARY_INV)
+                result7 = pytesseract.image_to_string(binary_adjusted, lang='rus+eng')
+
+                # Объединяем результаты всех методов
+                results = [result1, result2, result3, result4, result5, result6, result7]
+
+                # Проверяем каждый результат на наличие слова "ПРОПУСТИТЬ"
+                # Используем различные варианты написания для учета потенциальных ошибок распознавания
+                skip_variants = ["ПРОПУСТИТЬ", "ПРОПУСТИTЬ", "ПРОNYСТИТЬ", "ПPОПУСТИТЬ",
+                                 "ПРОПУCTИТЬ", "ПРOПУСТИТЬ", "ПPOПУСТИТЬ", "ПPOПУCTИTЬ",
+                                 "SKIP", "ПРОПУСТИТ", "ПPОПУCTИTb", "ПРОПУCТИТЬ"]
+
+                for i, result in enumerate(results):
+                    result_upper = result.upper()
+                    for variant in skip_variants:
+                        if variant in result_upper:
+                            self.logger.info(f"Слово '{variant}' найдено методом {i + 1}")
+                            self.click_coord(skip_position[0], skip_position[1])
+                            return True
+
+                    # Проверка на нечеткое соответствие для еще большей надежности
+                    # С порогом менее строгим, чтобы учесть больше вариаций
+                    if self._is_text_similar("ПРОПУСТИТЬ", result_upper, threshold=0.6):
+                        self.logger.info(f"Текст, похожий на 'ПРОПУСТИТЬ', найден методом {i + 1}")
+                        self.click_coord(skip_position[0], skip_position[1])
+                        return True
+
+            except Exception as e:
+                self.logger.error(f"Ошибка при распознавании текста: {e}")
+
+            # МЕТОД 8: Поиск по цветовым характеристикам
+            # (Зеленый текст "ПРОПУСТИТЬ" часто имеет определенный диапазон HSV)
+            try:
+                hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+
+                # Определение диапазонов HSV для зеленого текста (настроить по вашим изображениям)
+                lower_green = np.array([40, 50, 50])
+                upper_green = np.array([80, 255, 255])
+
+                # Создание маски для зеленого текста
+                green_mask = cv2.inRange(hsv, lower_green, upper_green)
+
+                # Вычисление общего числа пикселей в маске и процента зеленых пикселей
+                total_pixels = roi.shape[0] * roi.shape[1]
+                green_pixels = np.sum(green_mask > 0)
+                green_percent = green_pixels / total_pixels
+
+                # Проверка характерного расположения зеленых пикселей для кнопки ПРОПУСТИТЬ
+                # (только если достаточное количество зеленых пикселей и они расположены
+                # в правой части области, где обычно находится кнопка)
+                if green_percent > 0.05 and green_percent < 0.3:
+                    # Вычисление центра масс зеленых пикселей
+                    M = cv2.moments(green_mask)
+                    if M["m00"] > 0:
+                        cx = int(M["m10"] / M["m00"])
+                        cy = int(M["m01"] / M["m00"])
+
+                        # Проверка, что центр масс в правой части области
+                        if cx > w * 0.5:
+                            self.logger.info("Кнопка ПРОПУСТИТЬ найдена по цветовому анализу")
+                            self.click_coord(skip_position[0], skip_position[1])
+                            return True
+
+            except Exception as e:
+                self.logger.error(f"Ошибка при поиске по цвету: {e}")
+
             time.sleep(0.5 if timeout is None else timeout)
 
         # Эта часть кода выполнится только если задан max_attempts
@@ -499,7 +734,6 @@ class GameBot:
 
             # Шаг 12: Ждем появления "Адский Генри" и нажимаем ПРОПУСТИТЬ
             self.logger.info('Шаг 12: Ждем появления текста "Адский Генри"')
-            # Ждем появления текста "Адский Генри" (координаты примерные)
             found = False
             for _ in range(20):  # Пробуем до 20 раз с интервалом в 1 секунду
                 if self.find_text_on_screen("Адский Генри", region=(389, 440, 200, 100), timeout=1):
@@ -553,9 +787,20 @@ class GameBot:
             self.logger.info("Шаг 22: Ищем и нажимаем ПРОПУСТИТЬ")
             self.find_skip_button()
 
-            # Шаг 23: Начинаем плыть на корабле
-            self.logger.info("Шаг 23: Клик по координатам (741, 145) - начинаем плыть на корабле")
-            self.click_coord(741, 145)
+            # Шаг 23: Ждем надпись "Сбор припасов" и начинаем плыть на корабле (ОБНОВЛЕНО В НОВОМ ТЗ)
+            self.logger.info('Шаг 23: Ждем надписи "Сбор припасов" и нажимаем на координаты (741, 145)')
+            found = False
+            for _ in range(20):  # 20 попыток с интервалом 1 секунду
+                if self.find_text_on_screen("Сбор припасов", region=(0, 200, 250, 170), timeout=1):
+                    found = True
+                    break
+                time.sleep(1)
+
+            if found:
+                self.click_coord(741, 145)
+            else:
+                self.logger.warning('Надпись "Сбор припасов" не найдена, продолжаем выполнение')
+                self.click_coord(741, 145)
 
             # Шаг 24: Ищем слово ПРОПУСТИТЬ и кликаем на него
             self.logger.info("Шаг 24: Ищем и нажимаем ПРОПУСТИТЬ")
@@ -671,7 +916,8 @@ class GameBot:
             self.find_skip_button()
 
             # Шаг 50: Нажимаем на квест "Отправиться в залив Мертвецов"
-            self.logger.info('Шаг 50: Клик по координатам (93, 285) - нажимаем на квест "Отправиться в залив Мертвецов"')
+            self.logger.info(
+                'Шаг 50: Клик по координатам (93, 285) - нажимаем на квест "Отправиться в залив Мертвецов"')
             self.click_coord(93, 285)
 
             # Шаг 51: Ищем слово ПРОПУСТИТЬ и кликаем на него
@@ -729,13 +975,22 @@ class GameBot:
             self.logger.info("Шаг 67: Клик по координатам (1072, 87) - жмем на иконку компаса")
             self.click_coord(1072, 87)
 
-            # Шаг 68: Нажимаем на любую часть экрана
-            self.logger.info("Шаг 68: Клик по координатам (1072, 87) - нажимаем на любую часть экрана")
-            self.click_coord(1072, 87)
+            # Шаг 68: Ждем надписи "Заполучи кают гребцов: 1" (ОБНОВЛЕНО В НОВОМ ТЗ)
+            self.logger.info('Шаг 68: Ждем надписи "Заполучи кают гребцов: 1" и нажимаем на нее')
+            found = False
+            for _ in range(20):  # 20 попыток с интервалом 1 секунду
+                if self.find_text_on_screen("Заполучи кают гребцов: 1", region=(0, 200, 250, 170), timeout=1):
+                    found = True
+                    break
+                time.sleep(1)
 
-            # Шаг 69: Нажимаем на квест "Заполучи кают гребцов: 1"
-            self.logger.info('Шаг 69: Клик по координатам (89, 280) - нажимаем на квест "Заполучи кают гребцов: 1"')
-            self.click_coord(89, 280)
+            if found:
+                self.click_coord(89, 280)
+            else:
+                self.logger.warning('Надпись "Заполучи кают гребцов: 1" не найдена, продолжаем выполнение')
+                self.click_coord(89, 280)
+
+            # Шаг 69: УДАЛЕН В НОВОМ ТЗ
 
             # Шаг 70: Нажимаем на иконку молоточка чтобы что-то построить
             self.logger.info("Шаг 70: Клик по координатам (43, 481) - нажимаем на иконку молоточка")
@@ -749,9 +1004,7 @@ class GameBot:
             self.logger.info("Шаг 72: Клик по координатам (676, 580) - подтверждаем постройку")
             self.click_coord(676, 580)
 
-            # Шаг 73: Снимаем тент с каюты гребцов
-            self.logger.info("Шаг 73: Клик по координатам (642, 580) - снимаем тент")
-            self.click_coord(642, 580)
+            # Шаг 73: УДАЛЕН В НОВОМ ТЗ
 
             # Шаг 74: Нажимаем на квест "Заполучи кают гребцов: 1"
             self.logger.info('Шаг 74: Клик по координатам (89, 280) - нажимаем на квест "Заполучи кают гребцов: 1"')
@@ -773,9 +1026,7 @@ class GameBot:
             self.logger.info("Шаг 78: Клик по координатам (679, 581) - подтверждаем постройку")
             self.click_coord(679, 581)
 
-            # Шаг 79: Снимаем тент с орудийной палубы
-            self.logger.info("Шаг 79: Клик по координатам (638, 473) - снимаем тент")
-            self.click_coord(638, 473)
+            # Шаг 79: УДАЛЕН В НОВОМ ТЗ
 
             # Шаг 80: Нажимаем на квест "Заполучи орудийных палуб: 1"
             self.logger.info('Шаг 80: Клик по координатам (89, 280) - нажимаем на квест "Заполучи орудийных палуб: 1"')
