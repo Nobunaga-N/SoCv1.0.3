@@ -41,7 +41,7 @@ IMAGE_PATHS = {
 COORDINATES = {
     'profile_icon': (54, 55),
     'settings_icon': (1073, 35),
-    'characters_icon': (638, 319),
+    'characters_icon': (732, 319),
     'add_character_icon': (270, 184),
     'season_scroll_start': (257, 353),
     'season_scroll_end': (254, 187),
@@ -69,7 +69,7 @@ TEMPLATE_MATCHING_THRESHOLD = 0.7  # Порог уверенности при п
 TUTORIAL_STEPS = [
     {'type': 'click_image', 'params': {'image_key': 'open_profile'}, 'desc': 'Клик по иконке профиля'},
     {'type': 'click_coord', 'params': {'x': 1073, 'y': 35}, 'desc': 'Клик по иконке настроек'},
-    {'type': 'click_coord', 'params': {'x': 638, 'y': 319}, 'desc': 'Клик по иконке персонажей'},
+    {'type': 'click_coord', 'params': {'x': 738, 'y': 319}, 'desc': 'Клик по иконке персонажей'},
     {'type': 'click_coord', 'params': {'x': 270, 'y': 184}, 'desc': 'Клик по иконке добавления персонажей'},
     {'type': 'select_server', 'params': {}, 'desc': 'Выбор сезона и сервера'},
     {'type': 'click_image', 'params': {'image_key': 'confirm_new_acc'}, 'desc': 'Клик по кнопке подтвердить'},

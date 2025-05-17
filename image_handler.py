@@ -8,7 +8,6 @@ import logging
 
 from config import TEMPLATE_MATCHING_THRESHOLD, SCREENSHOT_TIMEOUT
 
-
 class ImageHandler:
     """Класс для обработки изображений и поиска шаблонов на экране."""
 
@@ -94,15 +93,25 @@ class ImageHandler:
         start_time = time.time()
 
         while time.time() - start_time < timeout:
-            # Получение скриншота
-            screenshot = self.adb.screenshot()
+            try:
+                # Получение скриншота
+                screenshot = self.adb.screenshot()
 
-            # Поиск шаблона
-            result = self.find_template(screenshot, template_path, threshold)
+                if screenshot is None or screenshot.size == 0:
+                    self.logger.warning("Получен пустой скриншот")
+                    time.sleep(SCREENSHOT_TIMEOUT)
+                    continue
 
-            if result:
-                self.logger.info(f"Шаблон {template_path} найден на координатах: {result[:2]}")
-                return result
+                # Поиск шаблона
+                result = self.find_template(screenshot, template_path, threshold)
+
+                if result:
+                    self.logger.info(f"Шаблон {template_path} найден на координатах: {result[:2]}")
+                    return result
+
+            except Exception as e:
+                self.logger.error(f"Ошибка при ожидании шаблона {template_path}: {e}", exc_info=True)
+                time.sleep(SCREENSHOT_TIMEOUT * 2)  # Увеличенная пауза при ошибке
 
             # Пауза перед следующей попыткой
             time.sleep(SCREENSHOT_TIMEOUT)
@@ -122,12 +131,16 @@ class ImageHandler:
         Returns:
             bool: True если шаблон найден и клик выполнен, False иначе
         """
-        result = self.wait_for_template(template_path, timeout, threshold)
+        try:
+            result = self.wait_for_template(template_path, timeout, threshold)
 
-        if result:
-            x, y, _, _ = result
-            self.adb.tap(x, y)
-            return True
+            if result:
+                x, y, _, _ = result
+                self.adb.tap(x, y)
+                return True
+
+        except Exception as e:
+            self.logger.error(f"Ошибка при поиске и клике по шаблону {template_path}: {e}", exc_info=True)
 
         return False
 

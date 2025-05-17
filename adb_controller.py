@@ -7,14 +7,11 @@ import cv2
 import random
 import logging
 import subprocess
+import os
+import tempfile
 from io import BytesIO
 
-# Импортируем adb-shell вместо pure-python-adb
-from adb_shell.adb_device import AdbDeviceUsb, AdbDeviceTcp
-from adb_shell.auth.sign_pythonrsa import PythonRSASigner
-
 from config import DEFAULT_TIMEOUT, LOADING_TIMEOUT, GAME_PACKAGE, GAME_ACTIVITY
-
 
 class ADBController:
     """Класс для взаимодействия с устройством через ADB."""
@@ -67,15 +64,16 @@ class ADBController:
             self.logger.error(f"Ошибка при подключении к устройству: {e}")
             raise
 
-    def execute_adb_command(self, *args):
+    def execute_adb_command(self, *args, binary_output=False):
         """
         Выполнение команды ADB через subprocess.
 
         Args:
             *args: аргументы команды ADB
+            binary_output: если True, вернуть бинарные данные (для команд, возвращающих бинарные данные)
 
         Returns:
-            str: вывод команды
+            str или bytes: вывод команды
         """
         cmd = ['adb']
 
@@ -88,8 +86,12 @@ class ADBController:
 
         # Выполнение команды
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-            return result.stdout.strip()
+            if binary_output:
+                result = subprocess.run(cmd, capture_output=True, check=True)
+                return result.stdout
+            else:
+                result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                return result.stdout.strip()
         except subprocess.CalledProcessError as e:
             self.logger.error(f"Ошибка при выполнении команды ADB: {e}")
             self.logger.error(f"Stderr: {e.stderr}")
@@ -118,8 +120,7 @@ class ADBController:
         """
         random_x = center_x + random.randint(-radius, radius)
         random_y = center_y + random.randint(-radius, radius)
-        self.logger.debug(
-            f"Случайный клик в области ({center_x}±{radius}, {center_y}±{radius}): ({random_x}, {random_y})")
+        self.logger.debug(f"Случайный клик в области ({center_x}±{radius}, {center_y}±{radius}): ({random_x}, {random_y})")
         self.tap(random_x, random_y)
 
     def swipe(self, start_x, start_y, end_x, end_y, duration=1000):
@@ -185,13 +186,56 @@ class ADBController:
         Returns:
             numpy.ndarray: изображение в формате OpenCV (BGR)
         """
-        # Получение скриншота через ADB
-        result = self.execute_adb_command('exec-out', 'screencap', '-p')
+        try:
+            # Использование shell команды screencap для получения скриншота в бинарном формате
+            self.logger.debug("Получение скриншота экрана")
 
-        # Конвертация вывода команды в изображение
-        image_bytes = BytesIO(result.encode('latin-1').decode('latin-1').encode('iso-8859-1'))
-        image = cv2.imdecode(np.frombuffer(image_bytes.read(), np.uint8), cv2.IMREAD_COLOR)
-        return image
+            # Метод 1: Через exec-out (более быстрый метод, но может не работать на некоторых устройствах)
+            try:
+                # Используем binary_output=True, т.к. screencap возвращает бинарные данные
+                screenshot_binary = self.execute_adb_command('exec-out', 'screencap', '-p', binary_output=True)
+
+                # Преобразование бинарных данных PNG в изображение формата OpenCV
+                image = cv2.imdecode(np.frombuffer(screenshot_binary, np.uint8), cv2.IMREAD_COLOR)
+
+                if image is not None:
+                    return image
+            except Exception as e:
+                self.logger.warning(f"Ошибка при получении скриншота через exec-out: {e}")
+                # Продолжаем выполнение, попробуем альтернативный метод
+
+            # Метод 2: Через временный файл (более надежный метод)
+            # Создаем временный файл для скриншота
+            temp_file = 'temp_screenshot.png'
+
+            # Сохраняем скриншот во временный файл на устройстве
+            self.execute_adb_command('shell', 'screencap', '-p', '/sdcard/' + temp_file)
+
+            # Получаем файл с устройства
+            self.execute_adb_command('pull', '/sdcard/' + temp_file, temp_file)
+
+            # Читаем изображение с помощью OpenCV
+            image = cv2.imread(temp_file)
+
+            # Удаляем временные файлы
+            import os
+            try:
+                os.remove(temp_file)
+                self.execute_adb_command('shell', 'rm', '/sdcard/' + temp_file)
+            except Exception as e:
+                self.logger.warning(f"Ошибка при удалении временных файлов: {e}")
+
+            if image is None:
+                raise ValueError("Не удалось получить скриншот")
+
+            return image
+
+        except Exception as e:
+            self.logger.error(f"Ошибка при получении скриншота: {e}", exc_info=True)
+
+            # В случае критической ошибки возвращаем пустое изображение
+            # чтобы не вызывать падение программы
+            return np.zeros((720, 1280, 3), dtype=np.uint8)
 
     def start_app(self, package_name=GAME_PACKAGE, activity_name=GAME_ACTIVITY):
         """
@@ -208,7 +252,7 @@ class ADBController:
             self.execute_adb_command('shell', cmd)
         else:
             self.execute_adb_command('shell', 'monkey', '-p', package_name,
-                                     '-c', 'android.intent.category.LAUNCHER', '1')
+                                    '-c', 'android.intent.category.LAUNCHER', '1')
 
         time.sleep(LOADING_TIMEOUT)
 

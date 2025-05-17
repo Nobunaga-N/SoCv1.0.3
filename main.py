@@ -13,7 +13,6 @@ from adb_controller import ADBController
 from image_handler import ImageHandler
 from game_bot import GameBot
 
-
 def parse_arguments():
     """
     Парсинг аргументов командной строки.
@@ -38,7 +37,7 @@ def parse_arguments():
     )
 
     parser.add_argument(
-        '-h', '--host',
+        '-H', '--host',
         type=str,
         default='127.0.0.1',
         help='Хост ADB сервера (по умолчанию: 127.0.0.1)'
@@ -73,7 +72,6 @@ def parse_arguments():
     )
 
     return parser.parse_args()
-
 
 def check_environment():
     """
@@ -132,7 +130,6 @@ def check_environment():
     logger.info("Все проверки пройдены успешно")
     return True
 
-
 def main():
     """Главная функция запуска бота."""
     # Парсинг аргументов командной строки
@@ -176,7 +173,6 @@ def main():
         sys.exit(1)
     finally:
         logger.info("Работа бота завершена")
-
 
 if __name__ == "__main__":
     main()
