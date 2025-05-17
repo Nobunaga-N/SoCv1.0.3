@@ -157,6 +157,19 @@ def main():
             except ValueError:
                 print("Ошибка: Введите корректные числовые значения.")
 
+        # Запрос начального шага для первого сервера
+        start_step = 1
+        try:
+            print("\n=== Настройка начального шага (только для первого сервера) ===")
+            start_step = int(input("Введите начальный шаг для первого сервера (по умолчанию 1): ") or "1")
+
+            if start_step < 1 or start_step > 97:  # 97 - последний шаг обучения
+                print(f"Предупреждение: Введен шаг {start_step} вне диапазона 1-97. Будет использован шаг 1.")
+                start_step = 1
+        except ValueError:
+            print("Ошибка при вводе начального шага. Будет использован шаг 1.")
+            start_step = 1
+
         # Инициализация компонентов
         logger.info("Инициализация компонентов...")
 
@@ -175,9 +188,11 @@ def main():
 
         # Запуск бота на выполнение заданного количества циклов
         logger.info(f"Запуск бота на {args.cycles} циклов с серверами от {start_server} до {end_server}")
+        logger.info(f"Начальный шаг для первого сервера: {start_step}")
         game_bot.run_bot(cycles=args.cycles,
                          start_server=start_server,
-                         end_server=end_server)
+                         end_server=end_server,
+                         first_server_start_step=start_step)
 
     except KeyboardInterrupt:
         logger.info("Работа бота прервана пользователем")
