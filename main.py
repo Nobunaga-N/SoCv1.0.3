@@ -53,19 +53,7 @@ def parse_arguments():
         help='Включение подробного логирования'
     )
 
-    parser.add_argument(
-        '--start-server',
-        type=int,
-        default=619,
-        help='Начальный сервер для прокачки (по умолчанию: 619)'
-    )
-
-    parser.add_argument(
-        '--end-server',
-        type=int,
-        default=1,
-        help='Конечный сервер для прокачки (по умолчанию: 1)'
-    )
+    # Аргументы --start-server и --end-server удалены, так как теперь запрашиваются интерактивно
 
     return parser.parse_args()
 
@@ -137,9 +125,10 @@ def check_environment():
     logger.info("Все проверки пройдены успешно")
     return True
 
+
 def main():
     """Главная функция запуска бота."""
-    # Парсинг аргументов командной строки
+    # Парсинг аргументов командной строки (оставляем для других параметров)
     args = parse_arguments()
 
     # Настройка логирования
@@ -153,6 +142,21 @@ def main():
         sys.exit(1)
 
     try:
+        # Запрос диапазона серверов у пользователя через консоль
+        while True:
+            try:
+                print("\n=== Настройка диапазона серверов ===")
+                start_server = int(input("Введите начальный сервер (по умолчанию 619): ") or "619")
+                end_server = int(input("Введите конечный сервер (по умолчанию 1): ") or "1")
+
+                if start_server < end_server:
+                    print("Ошибка: Начальный сервер должен быть больше или равен конечному.")
+                    continue
+
+                break
+            except ValueError:
+                print("Ошибка: Введите корректные числовые значения.")
+
         # Инициализация компонентов
         logger.info("Инициализация компонентов...")
 
@@ -170,10 +174,10 @@ def main():
         game_bot = GameBot(adb_controller, image_handler)
 
         # Запуск бота на выполнение заданного количества циклов
-        logger.info(f"Запуск бота на {args.cycles} циклов с серверами от {args.start_server} до {args.end_server}")
+        logger.info(f"Запуск бота на {args.cycles} циклов с серверами от {start_server} до {end_server}")
         game_bot.run_bot(cycles=args.cycles,
-                         start_server=args.start_server,
-                         end_server=args.end_server)
+                         start_server=start_server,
+                         end_server=end_server)
 
     except KeyboardInterrupt:
         logger.info("Работа бота прервана пользователем")

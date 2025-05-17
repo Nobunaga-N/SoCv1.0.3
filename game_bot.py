@@ -127,14 +127,14 @@ class GameBot:
 
         return self.image.is_template_on_screen(IMAGE_PATHS[image_key], timeout)
 
-    def find_text_on_screen(self, text, region=None, timeout=5):
+    def find_text_on_screen(self, text, region=None, timeout=None):
         """
         Поиск текста на экране с использованием OCR.
 
         Args:
             text: искомый текст
             region: область поиска (x, y, w, h) или None для всего экрана
-            timeout: максимальное время ожидания в секундах
+            timeout: максимальное время ожидания в секундах, None - бесконечное ожидание
 
         Returns:
             tuple: (x, y, w, h) координаты и размеры найденного текста или None
@@ -145,8 +145,15 @@ class GameBot:
 
         self.logger.debug(f"Поиск текста '{text}' на экране")
         start_time = time.time()
+        attempt = 0
 
-        while time.time() - start_time < timeout:
+        # Бесконечный цикл, если timeout=None, иначе ограниченный по времени
+        while timeout is None or time.time() - start_time < timeout:
+            attempt += 1
+            if attempt % 10 == 0:  # Логируем каждые 10 попыток для уменьшения спама в логах
+                elapsed_time = int(time.time() - start_time)
+                self.logger.info(f"Ожидание текста '{text}' продолжается {elapsed_time} секунд...")
+
             # Получение скриншота
             screenshot = self.adb.screenshot()
 
@@ -160,7 +167,7 @@ class GameBot:
             # Если указана область, вырезаем ее
             if region:
                 x, y, w, h = region
-                roi = gray[y:y+h, x:x+w]
+                roi = gray[y:y + h, x:x + w]
             else:
                 roi = gray
                 x, y = 0, 0
@@ -175,30 +182,31 @@ class GameBot:
 
                 # Поиск текста в результате
                 if text.lower() in result.lower():
-                    self.logger.info(f"Текст '{text}' найден на экране")
+                    self.logger.info(f"Текст '{text}' найден на экране после {attempt} попыток")
 
                     # Для простоты возвращаем центр области
                     if region:
-                        return (region[0] + region[2]//2, region[1] + region[3]//2, region[2], region[3])
+                        return (region[0] + region[2] // 2, region[1] + region[3] // 2, region[2], region[3])
                     else:
                         h, w = screenshot.shape[:2]
-                        return (w//2, h//2, w, h)
+                        return (w // 2, h // 2, w, h)
             except Exception as e:
                 self.logger.error(f"Ошибка при распознавании текста: {e}")
 
             time.sleep(0.5)
 
+        # Эта часть кода выполнится только если задан timeout
         self.logger.warning(f"Текст '{text}' не найден на экране за {timeout} сек")
         return None
 
-    def wait_for_text(self, text, region=None, timeout=30):
+    def wait_for_text(self, text, region=None, timeout=None):
         """
         Ожидание появления текста на экране.
 
         Args:
             text: ожидаемый текст
             region: область поиска (x, y, w, h) или None для всего экрана
-            timeout: максимальное время ожидания в секундах
+            timeout: максимальное время ожидания в секундах, None - бесконечное ожидание
 
         Returns:
             tuple: (x, y, w, h) координаты и размеры найденного текста или None
@@ -206,14 +214,14 @@ class GameBot:
         self.logger.info(f"Ожидание появления текста '{text}' на экране")
         return self.find_text_on_screen(text, region, timeout)
 
-    def find_and_click_text(self, text, region=None, timeout=10):
+    def find_and_click_text(self, text, region=None, timeout=None):
         """
         Поиск текста на экране и клик по нему.
 
         Args:
             text: искомый текст
             region: область поиска (x, y, w, h) или None для всего экрана
-            timeout: максимальное время ожидания в секундах
+            timeout: максимальное время ожидания в секундах, None - бесконечное ожидание
 
         Returns:
             bool: True если текст найден и клик выполнен, False иначе
@@ -374,13 +382,13 @@ class GameBot:
         # Для примера считаем, что все серверы доступны
         return True
 
-    def find_skip_button(self, max_attempts=5, timeout=2):
+    def find_skip_button(self, max_attempts=None, timeout=None):
         """
         Поиск и клик по кнопке "ПРОПУСТИТЬ".
 
         Args:
-            max_attempts: максимальное количество попыток
-            timeout: таймаут между попытками
+            max_attempts: максимальное количество попыток, None - бесконечные попытки
+            timeout: таймаут между попытками в секундах
 
         Returns:
             bool: True если кнопка найдена и нажата, False иначе
@@ -390,17 +398,20 @@ class GameBot:
         # Координаты области, где обычно находится кнопка ПРОПУСТИТЬ
         region = (1040, 12, 200, 60)
 
-        for i in range(max_attempts):
-            self.logger.debug(f"Попытка {i+1}/{max_attempts}")
+        attempt = 0
+        while max_attempts is None or attempt < max_attempts:
+            attempt += 1
+            if attempt % 10 == 0:  # Логируем каждые 10 попыток
+                self.logger.info(f"Попытка {attempt} найти кнопку ПРОПУСТИТЬ")
 
-            # Пробуем найти текст ПРОПУСТИТЬ через OCR
+            # Пробуем найти текст ПРОПУСТИТЬ через OCR и нажать на него
             if self.find_and_click_text("ПРОПУСТИТЬ", region=region, timeout=timeout):
                 return True
 
-            # Если не нашли, делаем клик по примерным координатам
-            self.click_coord(1142, 42)
-            time.sleep(timeout)
+            # Небольшая пауза между попытками
+            time.sleep(0.5 if timeout is None else timeout)
 
+        # Эта часть кода выполнится только если задан max_attempts
         self.logger.warning(f"Не удалось найти кнопку ПРОПУСТИТЬ за {max_attempts} попыток")
         return False
 
@@ -856,8 +867,7 @@ class GameBot:
             self.logger.error("Начальный сервер должен быть больше или равен конечному")
             return 0
 
-        # Запуск игры в начале работы бота (только один раз)
-        self.start_game()
+        # Строка self.start_game() удалена - пользователь запускает игру сам
 
         successful_cycles = 0
         current_server = start_server
