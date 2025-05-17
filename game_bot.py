@@ -912,8 +912,8 @@ class GameBot:
                         self.adb.execute_adb_command('shell', 'input', 'tap', str(787), str(499))
 
                         # Добавляем дополнительную задержку в 12 секунд после шага 6 для загрузки
-                        self.logger.info("Ожидание 12 секунд после подтверждения создания персонажа...")
-                        time.sleep(12)
+                        self.logger.info("Ожидание 17 секунд после подтверждения создания персонажа...")
+                        time.sleep(17)
 
                 # Продолжение обучения с шага 7
                 if not self.execute_remaining_steps():
@@ -959,22 +959,25 @@ class GameBot:
                 self.logger.info("Шаг 7: Ищем и нажимаем ПРОПУСТИТЬ (только OCR)")
                 # Отключаем цветовой анализ для шага 7
                 self.find_skip_button(use_color_analysis=False)
+                time.sleep(1)
 
             # Шаг 8: Ищем слово ПРОПУСТИТЬ и кликаем на него (без цветового анализа)
             if start_from_step <= 8:
                 self.logger.info("Шаг 8: Ищем и нажимаем ПРОПУСТИТЬ (только OCR)")
                 # Отключаем цветовой анализ для шага 8
                 self.find_skip_button(use_color_analysis=False)
+                time.sleep(1)
 
             # Шаг 9: Ищем слово ПРОПУСТИТЬ и кликаем на него (здесь уже можно использовать цветовой анализ)
             if start_from_step <= 9:
                 self.logger.info("Шаг 9: Ищем и нажимаем ПРОПУСТИТЬ")
                 self.find_skip_button()
+                time.sleep(1)
 
             # Шаг 10: Активируем бой нажатием на пушку
             if start_from_step <= 10:
                 self.logger.info("Шаг 10: Ищем изображение cannon_is_ready.png и нажимаем на координаты (718, 438)")
-                if self.wait_for_image('cannon_is_ready', timeout=15):
+                if self.wait_for_image('cannon_is_ready', timeout=20):
                     self.click_coord(718, 438)
                 else:
                     self.logger.warning("Изображение cannon_is_ready.png не найдено, выполняем клик по координатам")
@@ -1063,6 +1066,7 @@ class GameBot:
             if start_from_step <= 24:
                 self.logger.info("Шаг 24: Ищем и нажимаем ПРОПУСТИТЬ")
                 self.find_skip_button()
+                time.sleep(0.5)
 
             # Шаг 25: Нажимаем на квест "Старый соперник"
             if start_from_step <= 25:
@@ -1071,10 +1075,10 @@ class GameBot:
                 time.sleep(1.5)
                 self.click_coord(93, 285)
 
-            # Шаг 26: Ищем слово ПРОПУСТИТЬ и кликаем на него (с задержкой 4 сек без поиска текста)
+            # Шаг 26: Ищем слово ПРОПУСТИТЬ и кликаем на него (с задержкой 8 сек без поиска текста)
             if start_from_step <= 26:
-                self.logger.info("Шаг 26: Ждем 4 секунды и нажимаем по координатам (1142, 42)")
-                time.sleep(4)
+                self.logger.info("Шаг 26: Ждем 8 секунд и нажимаем по координатам (1142, 42)")
+                time.sleep(8)
                 self.click_coord(1142, 42)
 
             # Шаг 27: Нажимаем на квест "Старый соперник"
@@ -1088,11 +1092,13 @@ class GameBot:
             if start_from_step <= 28:
                 self.logger.info("Шаг 28: Ищем и нажимаем ПРОПУСТИТЬ")
                 self.find_skip_button()
+                time.sleep(1)
 
             # Шаг 29: Ищем слово ПРОПУСТИТЬ и кликаем на него
             if start_from_step <= 29:
                 self.logger.info("Шаг 29: Ищем и нажимаем ПРОПУСТИТЬ")
                 self.find_skip_button()
+                time.sleep(3)
 
             # Шаг 30: Жмем на любую часть экрана чтобы продолжить после победы
             if start_from_step <= 30:
@@ -1103,19 +1109,23 @@ class GameBot:
             if start_from_step <= 31:
                 self.logger.info("Шаг 31: Ищем и нажимаем ПРОПУСТИТЬ")
                 self.find_skip_button()
+                time.sleep(0.5)
 
             # Шаг 32: Ждем появления gold_compas.png и жмем на компас
             if start_from_step <= 32:
                 self.logger.info("Шаг 32: Ожидаем изображение gold_compas.png и нажимаем (1074, 88) - жмем на компас")
                 if self.wait_for_image('gold_compas', timeout=15):
+                    time.sleep(0.5)
                     self.click_coord(1074, 88)
                 else:
                     self.logger.warning("Изображение gold_compas.png не найдено, выполняем клик по координатам")
+                    time.sleep(0.5)
                     self.click_coord(1074, 88)
 
             # Шаг 33: Еще раз жмем на компас
             if start_from_step <= 33:
                 self.logger.info("Шаг 33: Клик по координатам (701, 258) - еще раз жмем на компас")
+                time.sleep(1.5)
                 self.click_coord(701, 258)
 
             # Шаг 34: Ищем слово ПРОПУСТИТЬ и кликаем на него
@@ -1204,6 +1214,7 @@ class GameBot:
                 self.logger.info("Шаг 46: Ждем 0.5 секунды и нажимаем на координаты (1157, 604)")
                 time.sleep(0.5)
                 self.click_coord(1157, 604)
+                time.sleep(3)
 
             # Шаг 47: Нажимаем каждые 1.5 секунды по координатам, пока не появится start_battle.png
             if start_from_step <= 47:
@@ -1265,6 +1276,9 @@ class GameBot:
                 if start_from_step <= step:
                     self.logger.info(f"Шаг {step}: Ищем и нажимаем ПРОПУСТИТЬ")
                     self.find_skip_button()
+                    # Добавляем задержку 0.5 секунд для шагов с 53 по 56 включительно
+                    if 53 <= step <= 56:
+                        time.sleep(0.5)  # Задержка для избежания двойного нажатия между анимациями
 
             # Шаг 58: Ожидаем изображение long_song_3.png и нажимаем на квест
             if start_from_step <= 58:
@@ -1316,7 +1330,7 @@ class GameBot:
             # Шаг 64: Жмем назад чтобы выйти из вкладки корабля
             if start_from_step <= 64:
                 self.logger.info("Шаг 64: Ждем 2 секунды и нажимаем координаты (145, 25) - назад")
-                time.sleep(2)
+                time.sleep(3)
                 self.click_coord(145, 25)
 
             # Шаг 65: Жмем на кнопку постройки
@@ -1332,14 +1346,15 @@ class GameBot:
 
             # Шаг 67: Жмем на иконку компаса
             if start_from_step <= 67:
-                self.logger.info("Шаг 67: Ждем 1.5 секунды и нажимаем координаты (1072, 87) - иконка компаса")
+                self.logger.info("Шаг 67: Ждем 1.5 секунды и нажимаем координаты (1072, 87) - иконка компаса и возвращаемся обратно")
                 time.sleep(1.5)
                 self.click_coord(1072, 87)
+
 
             # Шаг 68: Ожидаем изображение long_song_6.png и нажимаем на квест
             if start_from_step <= 68:
                 self.logger.info('Шаг 68: Ожидаем изображение long_song_6.png и нажимаем на координаты (89, 280)')
-                if self.wait_for_image('long_song_6', timeout=15):
+                if self.wait_for_image('long_song_6', timeout=25):
                     self.click_coord(89, 280)
                 else:
                     self.logger.warning("Изображение long_song_6.png не найдено, выполняем клик по координатам")
@@ -1350,7 +1365,7 @@ class GameBot:
             # Шаг 70: Нажимаем на иконку молоточка
             if start_from_step <= 70:
                 self.logger.info("Шаг 70: Ждем 0.5 секунды и нажимаем координаты (43, 481) - иконка молоточка")
-                time.sleep(0.5)
+                time.sleep(1.5)
                 self.click_coord(43, 481)
 
             # Шаг 71: Ожидаем изображение cannon_long.png и выбираем каюту гребцов
@@ -1375,20 +1390,20 @@ class GameBot:
 
             # Шаг 74: Нажимаем на квест "Заполучи кают гребцов: 1"
             if start_from_step <= 74:
-                self.logger.info('Шаг 74: Ждем 3 секунды и нажимаем на координаты (89, 280)')
-                time.sleep(3)
+                self.logger.info('Шаг 74: Ждем 4 секунды и нажимаем на координаты (89, 280)')
+                time.sleep(4)
                 self.click_coord(89, 280)
 
             # Шаг 75: Нажимаем на квест "Заполучи орудийных палуб: 1"
             if start_from_step <= 75:
-                self.logger.info('Шаг 75: Ждем 1 секунду и нажимаем на координаты (89, 280)')
-                time.sleep(1)
+                self.logger.info('Шаг 75: Ждем 2.5 секунды и нажимаем на координаты (89, 280)')
+                time.sleep(2.5)
                 self.click_coord(89, 280)
 
             # Шаг 76: Нажимаем на иконку молоточка
             if start_from_step <= 76:
-                self.logger.info('Шаг 76: Ждем 1 секунду и нажимаем на координаты (43, 481)')
-                time.sleep(1)
+                self.logger.info('Шаг 76: Ждем 2.5 секунды и нажимаем на координаты (43, 481)')
+                self.logger.info("Шаг 67: Ждем 1.5 секунды и нажимаем координаты (1072, 87) - иконка компаса")
                 self.click_coord(43, 481)
 
             # Шаг 77: Ожидаем изображение cannon_long.png и выбираем орудийную палубу
@@ -1396,18 +1411,22 @@ class GameBot:
                 self.logger.info('Шаг 77: Ожидаем изображение cannon_long.png и нажимаем на координаты (687, 514)')
                 if self.wait_for_image('cannon_long', timeout=15):
                     self.click_coord(687, 514)
+                    time.sleep(2.5)
                 else:
                     self.logger.warning("Изображение cannon_long.png не найдено, выполняем клик по координатам")
                     self.click_coord(687, 514)
+                    time.sleep(2.5)
 
             # Шаг 78: Ожидаем изображение long_song_6.png и подтверждаем постройку
             if start_from_step <= 78:
                 self.logger.info('Шаг 78: Ожидаем изображение long_song_6.png и нажимаем на координаты (679, 581)')
                 if self.wait_for_image('long_song_6', timeout=15):
                     self.click_coord(679, 581)
+                    time.sleep(2.5)
                 else:
                     self.logger.warning("Изображение long_song_6.png не найдено, выполняем клик по координатам")
                     self.click_coord(679, 581)
+                    time.sleep(2.5)
 
             # Шаг 79: УДАЛЕН согласно новому ТЗ
 
@@ -1427,8 +1446,8 @@ class GameBot:
 
             # Шаг 83: Жмем на указатель на экране
             if start_from_step <= 83:
-                self.logger.info('Шаг 83: Ждем 1.5 секунды и нажимаем на координаты (698, 273)')
-                time.sleep(1.5)
+                self.logger.info('Шаг 83: Ждем 2.5 секунды и нажимаем на координаты (698, 273)')
+                time.sleep(2.5)
                 self.click_coord(698, 273)
 
             # Шаг 84: Ищем слово ПРОПУСТИТЬ и кликаем на него
@@ -1452,11 +1471,14 @@ class GameBot:
                 if start_from_step <= step:
                     self.logger.info(f"Шаг {step}: Ищем и нажимаем ПРОПУСТИТЬ")
                     self.find_skip_button()
+                    # Добавляем задержку 1 секунд для шагов с 87 по 88 включительно
+                    if 87 <= step <= 89:
+                        time.sleep(1)  # Задержка для избежания двойного нажатия между анимациями
 
             # Шаг 90: Нажимаем на квест "Богатая добыча"
             if start_from_step <= 90:
-                self.logger.info('Шаг 90: Ждем 1.5 секунды и нажимаем на координаты (89, 280)')
-                time.sleep(1.5)
+                self.logger.info('Шаг 90: Ждем 2 секунды и нажимаем на координаты (89, 280)')
+                time.sleep(2)
                 self.click_coord(89, 280)
 
             # Шаг 91: Ищем слово ПРОПУСТИТЬ и кликаем на него
@@ -1467,7 +1489,7 @@ class GameBot:
             # Шаг 92: Ищем изображение griffin.png и нажимаем на координаты (1142, 42)
             if start_from_step <= 92:
                 self.logger.info("Шаг 92: Ищем изображение griffin.png и нажимаем на координаты (1142, 42)")
-                if self.wait_for_image('griffin', timeout=15):
+                if self.wait_for_image('griffin', timeout=30):
                     self.click_coord(1142, 42)
                 else:
                     self.logger.warning("Изображение griffin.png не найдено, выполняем клик по координатам")
@@ -1478,7 +1500,7 @@ class GameBot:
                 self.logger.info(
                     "Шаг 93: Ждем 7 секунд, ищем изображение molly.png и нажимаем на координаты (1142, 42)")
                 time.sleep(7)
-                if self.wait_for_image('molly', timeout=15):
+                if self.wait_for_image('molly', timeout=30):
                     self.click_coord(1142, 42)
                 else:
                     self.logger.warning("Изображение molly.png не найдено, выполняем клик по координатам")
@@ -1510,7 +1532,7 @@ class GameBot:
 
                 # Проверяем наличие кнопки ПРОПУСТИТЬ
                 if self.find_skip_button(max_attempts=1):
-                    time.sleep(1)
+                    time.sleep(4)
                     self.logger.info('Найден ПРОПУСТИТЬ, нажимаем на квест "На волосок от смерти"')
                     self.click_coord(89, 280)
                 else:
