@@ -21,6 +21,23 @@ GAME_ACTIVITY = "com.kingsgroup.mo.KGUnityPlayerActivity"
 IMAGE_PATHS = {
     'start_battle': str(IMAGES_DIR / 'start_battle.png'),
     'coins': str(IMAGES_DIR / 'coins.png'),
+    'cannon_is_ready': str(IMAGES_DIR / 'cannon_is_ready.png'),
+    'hell_henry': str(IMAGES_DIR / 'hell_henry.png'),
+    'collect_items': str(IMAGES_DIR / 'collect_items.png'),
+    'gold_compas': str(IMAGES_DIR / 'gold_compas.png'),
+    'long_song': str(IMAGES_DIR / 'long_song.png'),
+    'confirm_trade': str(IMAGES_DIR / 'confirm_trade.png'),
+    'prepare_for_battle': str(IMAGES_DIR / 'prepare_for_battle.png'),
+    'ship_waiting_zaliz': str(IMAGES_DIR / 'ship_waiting_zaliz.png'),
+    'long_song_2': str(IMAGES_DIR / 'long_song_2.png'),
+    'long_song_3': str(IMAGES_DIR / 'long_song_3.png'),
+    'long_song_4': str(IMAGES_DIR / 'long_song_4.png'),
+    'long_song_5': str(IMAGES_DIR / 'long_song_5.png'),
+    'long_song_6': str(IMAGES_DIR / 'long_song_6.png'),
+    'cannon_long': str(IMAGES_DIR / 'cannon_long.png'),
+    'ship_song': str(IMAGES_DIR / 'ship_song.png'),
+    'griffin': str(IMAGES_DIR / 'griffin.png'),
+    'molly': str(IMAGES_DIR / 'molly.png')
 }
 
 # Координаты для кликов

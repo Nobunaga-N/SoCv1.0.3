@@ -107,7 +107,7 @@ class ADBController:
         """
         self.logger.debug(f"Клик по координатам: ({x}, {y})")
         self.execute_adb_command('shell', 'input', 'tap', str(x), str(y))
-        time.sleep(DEFAULT_TIMEOUT)
+        # Удаляем задержку time.sleep(DEFAULT_TIMEOUT)
 
     def tap_random(self, center_x, center_y, radius=50):
         """
@@ -120,8 +120,10 @@ class ADBController:
         """
         random_x = center_x + random.randint(-radius, radius)
         random_y = center_y + random.randint(-radius, radius)
-        self.logger.debug(f"Случайный клик в области ({center_x}±{radius}, {center_y}±{radius}): ({random_x}, {random_y})")
+        self.logger.debug(
+            f"Случайный клик в области ({center_x}±{radius}, {center_y}±{radius}): ({random_x}, {random_y})")
         self.tap(random_x, random_y)
+        # Удаляем задержку time.sleep(DEFAULT_TIMEOUT)
 
     def swipe(self, start_x, start_y, end_x, end_y, duration=1000):
         """
@@ -139,7 +141,7 @@ class ADBController:
                                  str(start_x), str(start_y),
                                  str(end_x), str(end_y),
                                  str(duration))
-        time.sleep(DEFAULT_TIMEOUT)
+        # Удаляем задержку time.sleep(DEFAULT_TIMEOUT)
 
     def complex_swipe(self, points, total_duration=2000):
         """
@@ -172,7 +174,7 @@ class ADBController:
         """
         self.logger.debug(f"Отправка события клавиши: {key_code}")
         self.execute_adb_command('shell', 'input', 'keyevent', str(key_code))
-        time.sleep(DEFAULT_TIMEOUT)
+        # Удаляем задержку time.sleep(DEFAULT_TIMEOUT)
 
     def press_esc(self):
         """Нажатие клавиши ESC (BACK)."""
