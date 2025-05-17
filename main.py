@@ -16,9 +16,6 @@ from game_bot import GameBot
 def parse_arguments():
     """
     Парсинг аргументов командной строки.
-
-    Returns:
-        argparse.Namespace: аргументы командной строки
     """
     parser = argparse.ArgumentParser(description='Бот для прохождения обучения в игре Sea of Conquest')
 
@@ -57,18 +54,17 @@ def parse_arguments():
     )
 
     parser.add_argument(
-        '--season',
-        type=str,
-        choices=['S1', 'S2', 'S3', 'S4', 'S5', 'X1', 'X2', 'X3'],
-        default='S1',
-        help='Сезон для выбора сервера (по умолчанию: S1)'
+        '--start-server',
+        type=int,
+        default=619,
+        help='Начальный сервер для прокачки (по умолчанию: 619)'
     )
 
     parser.add_argument(
-        '--server',
+        '--end-server',
         type=int,
-        default=None,
-        help='Конкретный номер сервера (по умолчанию: случайный в выбранном сезоне)'
+        default=1,
+        help='Конечный сервер для прокачки (по умолчанию: 1)'
     )
 
     return parser.parse_args()
@@ -100,8 +96,8 @@ def check_environment():
     from config import IMAGES_DIR, IMAGE_PATHS
 
     if not os.path.exists(IMAGES_DIR):
-        logger.error(f"Директория с изображениями не найдена: {IMAGES_DIR}")
-        return False
+        os.makedirs(IMAGES_DIR, exist_ok=True)
+        logger.warning(f"Директория с изображениями создана: {IMAGES_DIR}")
 
     # Проверка наличия необходимых изображений
     missing_images = []
@@ -110,12 +106,23 @@ def check_environment():
             missing_images.append(f"{image_key}: {image_path}")
 
     if missing_images:
-        logger.error(f"Отсутствуют следующие изображения:")
+        logger.warning("Отсутствуют следующие изображения (они будут нужны во время выполнения):")
         for missing in missing_images:
-            logger.error(f"  - {missing}")
-        return False
+            logger.warning(f"  - {missing}")
+        logger.warning("Пожалуйста, добавьте недостающие изображения в папку images перед запуском бота")
+        # Возвращаем True, так как согласно новому ТЗ мы в основном используем распознавание текста
+        # Можно продолжить работу, но предупредить пользователя
 
-    logger.info("Все необходимые изображения найдены")
+    else:
+        logger.info("Все необходимые изображения найдены")
+
+    # Проверка наличия Tesseract OCR
+    try:
+        import pytesseract
+        logger.info("OCR (Tesseract) доступен для использования")
+    except ImportError:
+        logger.warning("OCR (Tesseract) не доступен. Рекомендуется установить для лучшего распознавания текста")
+        # Продолжаем работу, но предупреждаем пользователя
 
     # Проверка наличия необходимых библиотек
     try:
@@ -163,8 +170,10 @@ def main():
         game_bot = GameBot(adb_controller, image_handler)
 
         # Запуск бота на выполнение заданного количества циклов
-        logger.info(f"Запуск бота на {args.cycles} циклов...")
-        game_bot.run_bot(cycles=args.cycles)
+        logger.info(f"Запуск бота на {args.cycles} циклов с серверами от {args.start_server} до {args.end_server}")
+        game_bot.run_bot(cycles=args.cycles,
+                         start_server=args.start_server,
+                         end_server=args.end_server)
 
     except KeyboardInterrupt:
         logger.info("Работа бота прервана пользователем")

@@ -274,36 +274,54 @@ class ServerSelector:
         # Для примера считаем, что все серверы доступны
         return True
 
-    def find_available_server(self, season_id, start_server=None):
+    def find_available_server(self, start_server=None, end_server=None):
         """
-        Поиск доступного сервера в указанном сезоне.
+        Поиск доступного сервера в указанном диапазоне.
 
         Args:
-            season_id: идентификатор сезона (S1, S2, S3, S4, S5, X1, X2, X3)
-            start_server: начальный сервер для поиска (если None, будет выбран максимальный в сезоне)
+            start_server: начальный сервер для поиска
+            end_server: конечный сервер для поиска
 
         Returns:
             int: номер доступного сервера или None, если не найдено
         """
-        if season_id not in SEASONS:
-            self.logger.error(f"Сезон '{season_id}' не найден в конфигурации")
+        if start_server is None or end_server is None:
+            self.logger.error("Не указан диапазон серверов")
             return None
 
-        max_server = SEASONS[season_id]['min_server']
-        min_server = SEASONS[season_id]['max_server']
+        # Определение сезона для начального сервера
+        season_id = None
+        for s_id, s_data in SEASONS.items():
+            if s_data['min_server'] >= start_server >= s_data['max_server']:
+                season_id = s_id
+                break
 
-        # Если начальный сервер не указан, берем максимальный
-        if start_server is None:
-            start_server = max_server
-
-        # Проверка, что сервер находится в пределах сезона
-        if start_server > max_server or start_server < min_server:
-            self.logger.error(f"Сервер {start_server} не входит в сезон {season_id}")
-            return None
+        if not season_id:
+            # Если сезон не найден, берем сервер из первого сезона
+            season_id = 'S1'
+            start_server = SEASONS[season_id]['min_server']
+            self.logger.warning(f"Не удалось определить сезон для сервера {start_server}. "
+                                f"Используем сервер {start_server} из сезона {season_id}")
 
         # Перебираем серверы в порядке убывания (от новых к старым)
-        for server_id in range(start_server, min_server - 1, -1):
-            self.logger.info(f"Проверка доступности сервера {server_id}")
+        for server_id in range(start_server, end_server - 1, -1):
+            # Определение сезона для текущего сервера
+            current_season_id = None
+            for s_id, s_data in SEASONS.items():
+                if s_data['min_server'] >= server_id >= s_data['max_server']:
+                    current_season_id = s_id
+                    break
+
+            if not current_season_id:
+                self.logger.warning(f"Не удалось определить сезон для сервера {server_id}, пропускаем")
+                continue
+
+            self.logger.info(f"Проверка доступности сервера {server_id} в сезоне {current_season_id}")
+
+            # Выбор сезона (если он изменился)
+            if current_season_id != season_id:
+                season_id = current_season_id
+                self.select_season(season_id)
 
             # Выбор сервера
             if not self.select_server(server_id):
@@ -314,5 +332,5 @@ class ServerSelector:
                 self.logger.info(f"Найден доступный сервер: {server_id}")
                 return server_id
 
-        self.logger.warning(f"Не найдено доступных серверов в сезоне {season_id}")
+        self.logger.warning(f"Не найдено доступных серверов в диапазоне от {start_server} до {end_server}")
         return None
