@@ -1,5 +1,6 @@
 """
-Модуль для автоматизации выбора сервера и сезона в игре.
+Улучшенный модуль для автоматизации выбора сервера и сезона в игре.
+Исправлены координаты и добавлены паузы между действиями.
 """
 import cv2
 import numpy as np
@@ -12,7 +13,7 @@ import time
 from config import SEASONS
 
 
-class ServerSelector:
+class ImprovedServerSelector:
     """
     Улучшенный класс для автоматизации выбора сервера и сезона.
     """
@@ -25,36 +26,36 @@ class ServerSelector:
             adb_controller: контроллер ADB
             image_handler: обработчик изображений
         """
-        self.logger = logging.getLogger('sea_conquest_bot.server_selector')
+        self.logger = logging.getLogger('sea_conquest_bot.improved_server_selector')
         self.adb = adb_controller
         self.image = image_handler
 
-        # Координаты для навигации по сезонам и серверам
+        # ИСПРАВЛЕННЫЕ координаты для сезонов на основе изображения
         self.season_coords = {
-            'S1': (250, 160),  # Изменена X-координата для лучшего попадания по тексту
-            'S2': (250, 220),
-            'S3': (250, 260),
-            'S4': (250, 300),
-            'S5': (250, 340),
-            'X1': (250, 390),
-            'X2': (250, 260),  # После скроллинга
-            'X3': (250, 300),  # После скроллинга
-            'X4': (250, 340)  # После скроллинга
+            'S1': (250, 180),   # Первый сезон
+            'S2': (250, 230),   # Второй сезон
+            'S3': (250, 280),   # Третий сезон
+            'S4': (250, 380),   # Четвертый сезон (исправлено с 300 на 380)
+            'S5': (250, 470),   # Пятый сезон (исправлено с 340 на 470)
+            'X1': (250, 520),   # X1 сезон (исправлено с 390 на 520)
+            'X2': (250, 230),   # После скроллинга
+            'X3': (250, 280),   # После скроллинга
+            'X4': (250, 330)    # После скроллинга
         }
 
-        # Координаты для скроллинга (уменьшены на 20% для большей точности)
-        self.season_scroll_start = (257, 553)
-        self.season_scroll_end = (254, 287)  # Было 187, увеличено на 20%
-        self.server_scroll_start = (778, 567)
-        self.server_scroll_end = (778, 180)  # Было 130, увеличено на 20%
+        # Координаты для скроллинга (более точные)
+        self.season_scroll_start = (257, 550)
+        self.season_scroll_end = (257, 200)
+        self.server_scroll_start = (640, 550)  # Центр области серверов
+        self.server_scroll_end = (640, 200)
 
-        # Область для поиска текста сезонов
-        self.season_text_roi = (150, 150, 350, 250)  # Увеличена область для лучшего распознавания
+        # Область для поиска текста сезонов (левая панель)
+        self.season_text_roi = (150, 150, 220, 400)
 
-        # Область для поиска текста серверов
-        self.server_text_roi = (350, 150, 500, 450)  # Увеличена область для лучшего распознавания
+        # Область для поиска текста серверов (правая панель)
+        self.server_text_roi = (400, 150, 500, 450)
 
-        # Попытка загрузки OCR, если доступен
+        # Попытка загрузки OCR
         try:
             import pytesseract
             self.ocr_available = True
@@ -63,14 +64,17 @@ class ServerSelector:
             self.ocr_available = False
             self.logger.warning("OCR (Tesseract) не доступен, будет использоваться распознавание шаблонов")
 
-        # Инициализация координат для серверов
-        self.server_base_y = 150  # Y-координата первого сервера
-        self.server_step_y = 45  # Шаг между серверами по Y
-        self.server_x = 500  # X-координата сервера (примерная середина элемента)
+        # ИСПРАВЛЕННЫЕ координаты для серверов
+        self.server_coords = {
+            'left_column': 500,   # X-координата для левого столбца серверов
+            'right_column': 900,  # X-координата для правого столбца серверов
+            'base_y': 155,        # Y-координата первого сервера
+            'step_y': 45          # Шаг между серверами по вертикали
+        }
 
     def select_season(self, season_id):
         """
-        Улучшенный метод выбора сезона.
+        Улучшенный метод выбора сезона с паузами.
 
         Args:
             season_id: идентификатор сезона (S1, S2, S3, S4, S5, X1, X2, X3, X4)
@@ -95,42 +99,40 @@ class ServerSelector:
                 self.season_scroll_start[1],
                 self.season_scroll_end[0],
                 self.season_scroll_end[1],
-                duration=1500  # Увеличенная продолжительность для плавности
+                duration=1000  # Уменьшенная продолжительность для плавности
             )
 
-            # Задержка после скроллинга для загрузки UI
+            # Обязательная пауза после скроллинга
             time.sleep(2)
+            self.logger.info("Пауза 2 секунды после скроллинга сезонов")
 
             # Проверка видимости нужного сезона после скроллинга
             if not self.is_season_visible(season_id):
                 self.logger.warning(f"Сезон {season_id} не виден после скроллинга, пробуем еще раз")
 
-                # Повторный скроллинг с большим смещением
+                # Повторный скроллинг с немного большим смещением
                 self.adb.swipe(
                     self.season_scroll_start[0],
                     self.season_scroll_start[1],
-                    self.season_scroll_end[0],
-                    self.season_scroll_end[1] - 20,
-                    duration=1500
+                    self.season_scroll_end[0] - 30,  # Больше смещение
+                    self.season_scroll_end[1],
+                    duration=1000
                 )
 
                 time.sleep(2)
+                self.logger.info("Дополнительная пауза 2 секунды после повторного скроллинга")
 
-                # Если после повторного скроллинга сезон все еще не виден, это ошибка
-                if not self.is_season_visible(season_id):
-                    self.logger.error(f"Не удалось отобразить сезон {season_id} после скроллинга")
-                    return False
-
-        # Клик по сезону
+        # Клик по сезону с паузой до и после
         x, y = self.season_coords[season_id]
         self.logger.info(f"Клик по сезону {season_id} по координатам ({x}, {y})")
+
+        # Небольшая пауза перед кликом
+        time.sleep(0.5)
         self.adb.tap(x, y)
 
-        # Задержка после выбора сезона
-        time.sleep(2)
-
-        # В реальном сценарии здесь можно добавить проверку успешности выбора сезона
-        # Например, через распознавание текста или проверку UI-элементов
+        # Пауза после клика для загрузки серверов
+        time.sleep(1.5)
+        self.logger.info("Пауза 1.5 секунды после выбора сезона")
 
         return True
 
@@ -163,7 +165,7 @@ class ServerSelector:
 
             # Проверка наличия сезона в тексте
             season_text = f"Сезон {season_id}"
-            if season_text in text:
+            if season_text in text or season_id in text:
                 self.logger.info(f"Сезон {season_id} виден на экране")
                 return True
 
@@ -172,12 +174,116 @@ class ServerSelector:
 
         except Exception as e:
             self.logger.error(f"Ошибка при проверке видимости сезона: {e}")
-            # В случае ошибки предполагаем, что сезон виден
             return True
+
+    def get_visible_servers(self):
+        """
+        Получение списка видимых на экране серверов с улучшенным распознаванием.
+
+        Returns:
+            list: список видимых серверов (номеров)
+        """
+        visible_servers = []
+
+        if not self.ocr_available:
+            self.logger.warning("OCR не доступен, возвращаем примерный список серверов")
+            return []
+
+        try:
+            screenshot = self.adb.screenshot()
+            x, y, w, h = self.server_text_roi
+            roi = screenshot[y:y + h, x:x + w]
+
+            import pytesseract
+            # Улучшенная предобработка
+            gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+
+            # Применяем несколько методов для лучшего распознавания
+            methods_results = []
+
+            # Метод 1: Стандартная бинаризация
+            _, binary = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY_INV)
+            text1 = pytesseract.image_to_string(binary, lang='rus+eng')
+            methods_results.append(text1)
+
+            # Метод 2: Адаптивная бинаризация
+            binary_adaptive = cv2.adaptiveThreshold(
+                gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                cv2.THRESH_BINARY_INV, 11, 2
+            )
+            text2 = pytesseract.image_to_string(binary_adaptive, lang='rus+eng')
+            methods_results.append(text2)
+
+            # Объединяем результаты всех методов
+            combined_text = ' '.join(methods_results)
+
+            # Поиск номеров серверов в тексте
+            servers = []
+
+            # Ищем паттерн "Море #XXX" или просто "#XXX"
+            patterns = [r"Море\s*#(\d{1,3})", r"#(\d{1,3})", r"(\d{3})"]
+
+            for pattern in patterns:
+                matches = re.findall(pattern, combined_text)
+                for match in matches:
+                    try:
+                        server_id = int(match)
+                        # Фильтруем только реалистичные номера серверов
+                        if 1 <= server_id <= 619:
+                            servers.append(server_id)
+                    except ValueError:
+                        continue
+
+            # Убираем дубликаты и сортируем
+            servers = sorted(list(set(servers)), reverse=True)
+            self.logger.info(f"Распознанные сервера: {servers}")
+            return servers
+
+        except Exception as e:
+            self.logger.error(f"Ошибка при распознавании серверов: {e}")
+            return []
+
+    def get_server_coordinates(self, server_id, visible_servers):
+        """
+        ИСПРАВЛЕННЫЙ метод получения координат для клика по серверу.
+
+        Args:
+            server_id: номер сервера
+            visible_servers: список видимых серверов (отсортированный по убыванию)
+
+        Returns:
+            tuple: (x, y) координаты для клика по серверу или None
+        """
+        if server_id not in visible_servers:
+            self.logger.warning(f"Сервер {server_id} не найден в списке видимых серверов: {visible_servers}")
+            return None
+
+        # Определяем индекс сервера в списке видимых (отсортированных по убыванию)
+        visible_servers_sorted = sorted(visible_servers, reverse=True)
+        try:
+            index = visible_servers_sorted.index(server_id)
+        except ValueError:
+            self.logger.error(f"Сервер {server_id} не найден в отсортированном списке")
+            return None
+
+        # Определяем позицию сервера (два столбца)
+        row = index // 2  # Номер строки (0, 1, 2, ...)
+        column = index % 2  # Столбец (0 - левый, 1 - правый)
+
+        # Рассчитываем координаты
+        if column == 0:  # Левый столбец
+            x = self.server_coords['left_column']
+        else:  # Правый столбец
+            x = self.server_coords['right_column']
+
+        y = self.server_coords['base_y'] + row * self.server_coords['step_y']
+
+        self.logger.info(f"Сервер {server_id}: индекс {index}, строка {row}, столбец {column}, координаты ({x}, {y})")
+        return (x, y)
 
     def select_server(self, server_id):
         """
-        Улучшенный метод выбора сервера.
+        Улучшенный метод выбора сервера с паузами и более точными координатами.
 
         Args:
             server_id: номер сервера
@@ -202,379 +308,155 @@ class ServerSelector:
         if not self.select_season(season_id):
             return False
 
-        # Получение информации о серверах в сезоне
-        max_server = SEASONS[season_id]['min_server']
-        min_server = SEASONS[season_id]['max_server']
+        # Получение списка видимых серверов
+        visible_servers = self.get_visible_servers()
 
-        # Порядковый номер сервера в сезоне (от новых к старым)
-        server_index = max_server - server_id
-
-        # Примерное количество серверов на странице
-        servers_per_page = 8  # Уменьшено с 10 для более точного расчета
-
-        # Номер страницы (начиная с 0)
-        page = server_index // servers_per_page
-
-        # Индекс на странице (начиная с 0)
-        page_index = server_index % servers_per_page
-
-        self.logger.info(
-            f"Сервер {server_id}: сезон {season_id}, номер {server_index}, страница {page}, позиция {page_index}")
-
-        # Попытка распознать текущие видимые сервера
-        visible_servers = self.recognize_servers_with_retry()
-
-        # Проверяем, видим ли уже целевой сервер
+        # Если сервер уже виден, кликаем по нему
         if server_id in visible_servers:
             self.logger.info(f"Сервер {server_id} уже виден на экране")
-        else:
-            # Скроллинг до нужной страницы
-            scroll_count = 0
-            max_scrolls = page + 2  # Добавляем запас
-
-            while scroll_count < max_scrolls:
-                # Если сервер уже виден, прекращаем скроллинг
-                if server_id in visible_servers:
-                    self.logger.info(f"Сервер {server_id} найден после {scroll_count} скроллов")
-                    break
-
-                # Если видны сервера меньше целевого, значит мы проскролили слишком далеко
-                if visible_servers and min(visible_servers) < server_id:
-                    self.logger.warning(f"Проскролили слишком далеко, видны сервера {visible_servers}")
-                    # Скроллинг в обратную сторону
-                    self.adb.swipe(
-                        self.server_scroll_end[0],
-                        self.server_scroll_end[1],
-                        self.server_scroll_start[0],
-                        self.server_scroll_start[1],
-                        duration=1500
-                    )
-                    time.sleep(2)
-                else:
-                    # Скроллинг вниз для отображения следующей страницы серверов
-                    self.logger.info(f"Скроллинг для отображения сервера {server_id}, попытка {scroll_count + 1}")
-                    self.adb.swipe(
-                        self.server_scroll_start[0],
-                        self.server_scroll_start[1],
-                        self.server_scroll_end[0],
-                        self.server_scroll_end[1],
-                        duration=1500
-                    )
-                    time.sleep(2)  # Увеличенная задержка после скроллинга
-
-                # Получение обновленного списка видимых серверов
-                prev_servers = visible_servers
-                visible_servers = self.recognize_servers_with_retry()
-
-                # Если список серверов не изменился, возможно, достигнут конец списка
-                if set(visible_servers) == set(prev_servers) and visible_servers:
-                    self.logger.warning(
-                        "Список серверов не изменился после скроллинга, возможно достигнут конец списка")
-                    break
-
-                scroll_count += 1
-
-        # После завершения скроллинга проверяем, найден ли нужный сервер
-        if server_id in visible_servers:
-            # Определение позиции сервера на экране
-            server_position = visible_servers.index(server_id)
-
-            # Примерные координаты серверов (расчет на основе позиции)
-            self.server_base_y = 150  # Y-координата первого сервера
-            self.server_step_y = 45  # Шаг между серверами по Y
-            self.server_x = 500  # X-координата сервера (примерная середина элемента)
-
-            server_y = self.server_base_y + server_position * self.server_step_y
-
-            self.logger.info(
-                f"Сервер {server_id} найден на позиции {server_position}, координаты ({self.server_x}, {server_y})")
-
-            # Клик по серверу
-            self.adb.tap(self.server_x, server_y)
-            time.sleep(2)  # Задержка после выбора сервера
-
-            return True
-        else:
-            # Сервер не найден, возможно он переполнен
-            self.logger.warning(f"Сервер {server_id} не найден в списке. Возможно, он переполнен.")
-
-            # Поиск ближайшего доступного сервера (предпочтительно с меньшим номером)
-            available_server = self.find_available_server(server_id, visible_servers)
-
-            if available_server:
-                self.logger.info(f"Выбираем доступный сервер {available_server} вместо {server_id}")
-
-                # Определение позиции доступного сервера
-                server_position = visible_servers.index(available_server)
-
-                # Расчет координат
-                server_y = self.server_base_y + server_position * self.server_step_y
-
-                # Клик по доступному серверу
-                self.adb.tap(self.server_x, server_y)
-                time.sleep(2)
-
+            server_coords = self.get_server_coordinates(server_id, visible_servers)
+            if server_coords:
+                # Пауза перед кликом
+                time.sleep(0.5)
+                self.adb.tap(server_coords[0], server_coords[1])
+                # Пауза после клика
+                time.sleep(1.5)
+                self.logger.info("Пауза 1.5 секунды после выбора сервера")
                 return True
+        else:
+            # Нужно проскроллить до сервера
+            self.logger.info(f"Сервер {server_id} не виден, выполняем скроллинг")
 
-            self.logger.error(f"Не найдено доступных серверов вблизи {server_id}")
-            return False
+            # Определяем направление скроллинга
+            max_attempts = 5
+            for attempt in range(max_attempts):
+                self.logger.info(f"Попытка скроллинга {attempt + 1}/{max_attempts}")
 
-    def recognize_servers_with_retry(self, max_attempts=3):
+                # Скроллинг вниз для поиска сервера
+                self.adb.swipe(
+                    self.server_scroll_start[0],
+                    self.server_scroll_start[1],
+                    self.server_scroll_end[0],
+                    self.server_scroll_end[1],
+                    duration=1000
+                )
+
+                # Пауза после скроллинга
+                time.sleep(1.5)
+                self.logger.info("Пауза 1.5 секунды после скроллинга серверов")
+
+                # Получаем обновленный список видимых серверов
+                visible_servers = self.get_visible_servers()
+
+                # Проверяем, найден ли нужный сервер
+                if server_id in visible_servers:
+                    self.logger.info(f"Сервер {server_id} найден после скроллинга")
+                    server_coords = self.get_server_coordinates(server_id, visible_servers)
+                    if server_coords:
+                        # Пауза перед кликом
+                        time.sleep(0.5)
+                        self.adb.tap(server_coords[0], server_coords[1])
+                        # Пауза после клика
+                        time.sleep(1.5)
+                        self.logger.info("Пауза 1.5 секунды после выбора сервера")
+                        return True
+
+                # Если сервер не найден, но видны сервера с меньшими номерами,
+                # значит мы проскролили слишком далеко
+                if visible_servers and min(visible_servers) < server_id:
+                    self.logger.info("Проскролили слишком далеко, ищем ближайший доступный сервер")
+                    break
+
+            # Если не нашли точный сервер, ищем ближайший доступный
+            available_server = self.find_next_available_server(server_id, visible_servers)
+            if available_server:
+                self.logger.info(f"Выбираем ближайший доступный сервер {available_server}")
+                server_coords = self.get_server_coordinates(available_server, visible_servers)
+                if server_coords:
+                    # Пауза перед кликом
+                    time.sleep(0.5)
+                    self.adb.tap(server_coords[0], server_coords[1])
+                    # Пауза после клика
+                    time.sleep(1.5)
+                    self.logger.info("Пауза 1.5 секунды после выбора сервера")
+                    return True
+
+        self.logger.error(f"Не удалось выбрать сервер {server_id}")
+        return False
+
+    def find_next_available_server(self, target_server, visible_servers):
         """
-        Распознавание серверов с повторными попытками.
-
-        Args:
-            max_attempts: максимальное количество попыток распознавания
-
-        Returns:
-            list: список распознанных серверов (номеров)
-        """
-        for attempt in range(max_attempts):
-            servers = self.recognize_servers()
-            if servers:
-                return servers
-
-            self.logger.warning(f"Не удалось распознать сервера, попытка {attempt + 1} из {max_attempts}")
-            time.sleep(1)
-
-        # Если после всех попыток серверы не распознаны, возвращаем пустой список
-        return []
-
-    def recognize_servers(self):
-        """
-        Улучшенный метод распознавания серверов на экране с использованием OCR.
-
-        Returns:
-            list: список распознанных серверов (номеров)
-        """
-        if not self.ocr_available:
-            self.logger.warning("OCR не доступен, возвращаем примерный список серверов")
-            # Возвращаем примерные номера серверов для текущей страницы
-            return [i for i in range(580, 570, -1)]
-
-        try:
-            screenshot = self.adb.screenshot()
-            x, y, w, h = self.server_text_roi
-            roi = screenshot[y:y + h, x:x + w]
-
-            import pytesseract
-            # Предобработка для улучшения распознавания
-            gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-            _, binary = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY_INV)
-
-            # Дополнительная обработка для улучшения распознавания
-            kernel = np.ones((1, 1), np.uint8)
-            binary = cv2.dilate(binary, kernel, iterations=1)
-
-            # Распознавание текста
-            text = pytesseract.image_to_string(binary, lang='rus+eng')
-
-            # Поиск номеров серверов в тексте с использованием регулярных выражений
-            servers = []
-            import re
-
-            # Поиск шаблона "Море #XXX"
-            pattern = r"Море\s+#(\d{1,3})"
-            matches = re.findall(pattern, text)
-
-            for match in matches:
-                try:
-                    server_id = int(match)
-                    servers.append(server_id)
-                except ValueError:
-                    continue
-
-            # Если серверы не найдены, пробуем более простой шаблон
-            if not servers:
-                # Поиск любых чисел, похожих на номера серверов (3 цифры)
-                digit_pattern = r"#?(\d{3})"
-                matches = re.findall(digit_pattern, text)
-
-                for match in matches:
-                    try:
-                        server_id = int(match)
-                        # Фильтруем только реалистичные номера серверов (из диапазона всех возможных)
-                        if 1 <= server_id <= 619:  # Диапазон всех возможных серверов
-                            servers.append(server_id)
-                    except ValueError:
-                        continue
-
-            # Сортировка серверов по убыванию (от новых к старым)
-            servers.sort(reverse=True)
-
-            self.logger.info(f"Распознанные сервера: {servers}")
-            return servers
-
-        except Exception as e:
-            self.logger.error(f"Ошибка при распознавании серверов: {e}")
-            return []
-
-    def find_available_server(self, target_server, visible_servers):
-        """
-        Поиск доступного сервера, если целевой недоступен или переполнен.
+        Поиск следующего доступного сервера, если целевой недоступен.
 
         Args:
             target_server: целевой номер сервера
             visible_servers: список видимых серверов
 
         Returns:
-            int: номер доступного сервера или None
+            int: номер следующего доступного сервера или None
         """
         if not visible_servers:
             return None
 
-        # Сортировка серверов по убыванию (от больших номеров к меньшим)
-        visible_servers.sort(reverse=True)
+        # Сортируем видимые сервера по убыванию
+        visible_servers = sorted(visible_servers, reverse=True)
 
-        # Ищем ближайший сервер с меньшим номером
+        # Ищем ближайший доступный сервер (с меньшим номером)
         for server in visible_servers:
             if server < target_server:
-                self.logger.info(f"Найден доступный сервер {server} (ближайший меньший к {target_server})")
+                self.logger.info(f"Найден ближайший доступный сервер {server} (меньше целевого {target_server})")
                 return server
 
-        # Если не найден сервер с меньшим номером, берем наибольший из доступных
-        self.logger.info(
-            f"Не найдено серверов меньше {target_server}, выбираем наибольший доступный {visible_servers[0]}")
-        return visible_servers[0]
+        # Если не нашли сервер с меньшим номером, берем наибольший доступный
+        if visible_servers:
+            self.logger.info(f"Выбираем наибольший доступный сервер {visible_servers[0]}")
+            return visible_servers[0]
 
-    def is_server_available(self, server_id):
+        return None
+
+    def select_server_with_fallback(self, server_id):
         """
-        Улучшенный метод проверки доступности сервера.
+        Метод выбора сервера с резервными вариантами.
 
         Args:
             server_id: номер сервера
 
         Returns:
-            bool: True если сервер доступен, False иначе
+            tuple: (success, selected_server) - успех операции и выбранный сервер
         """
-        # Получение текущих видимых серверов
-        visible_servers = self.recognize_servers()
+        self.logger.info(f"Попытка выбора сервера {server_id} с резервными вариантами")
 
-        # Если сервер виден в списке, считаем его доступным
-        if server_id in visible_servers:
-            self.logger.info(f"Сервер {server_id} доступен")
-            return True
+        # Сначала пытаемся выбрать точный сервер
+        if self.select_server(server_id):
+            return True, server_id
 
-        # Дополнительно можно проверить наличие иконок состояния сервера
-        # Например, на переполненных серверах может быть специальная иконка
-
-        self.logger.warning(f"Сервер {server_id} не найден в списке, считаем его недоступным")
-        return False
-
-    def find_available_server_in_range(self, start_server=None, end_server=None):
-        """
-        Улучшенный метод поиска доступного сервера в указанном диапазоне.
-
-        Args:
-            start_server: начальный сервер для поиска
-            end_server: конечный сервер для поиска
-
-        Returns:
-            int: номер доступного сервера или None, если не найдено
-        """
-        if start_server is None or end_server is None:
-            self.logger.error("Не указан диапазон серверов")
-            return None
-
-        # Определение сезона для начального сервера
+        # Если не получилось, ищем ближайшие сервера в том же сезоне
         season_id = None
         for s_id, s_data in SEASONS.items():
-            if s_data['min_server'] >= start_server >= s_data['max_server']:
+            if s_data['min_server'] >= server_id >= s_data['max_server']:
                 season_id = s_id
                 break
 
         if not season_id:
-            # Если сезон не найден, берем сервер из первого сезона
-            season_id = 'S1'
-            start_server = SEASONS[season_id]['min_server']
-            self.logger.warning(f"Не удалось определить сезон для сервера {start_server}. "
-                                f"Используем сервер {start_server} из сезона {season_id}")
+            self.logger.error(f"Не удалось определить сезон для сервера {server_id}")
+            return False, None
 
-        # Выбор сезона
-        if not self.select_season(season_id):
-            self.logger.error(f"Не удалось выбрать сезон {season_id}")
-            return None
+        # Пытаемся найти альтернативные сервера в том же сезоне
+        season_data = SEASONS[season_id]
+        alternative_servers = []
 
-        # Перебираем серверы в порядке убывания (от новых к старым)
-        current_server = start_server
-        while current_server >= end_server:
-            # Определение сезона для текущего сервера
-            current_season_id = None
-            for s_id, s_data in SEASONS.items():
-                if s_data['min_server'] >= current_server >= s_data['max_server']:
-                    current_season_id = s_id
-                    break
+        # Добавляем сервера с меньшими номерами (приоритет)
+        for alt_server in range(server_id - 1, season_data['max_server'] - 1, -1):
+            alternative_servers.append(alt_server)
+            if len(alternative_servers) >= 3:  # Ограничиваем количество попыток
+                break
 
-            # Если сезон изменился, выбираем новый сезон
-            if current_season_id and current_season_id != season_id:
-                season_id = current_season_id
-                self.logger.info(f"Переход к сезону {season_id}")
-                if not self.select_season(season_id):
-                    self.logger.error(f"Не удалось выбрать сезон {season_id}")
-                    # Продолжаем с поиском в текущем сезоне
+        # Пытаемся выбрать альтернативные сервера
+        for alt_server in alternative_servers:
+            self.logger.info(f"Пытаемся выбрать альтернативный сервер {alt_server}")
+            if self.select_server(alt_server):
+                self.logger.info(f"Успешно выбран альтернативный сервер {alt_server}")
+                return True, alt_server
 
-            # Получение текущих видимых серверов
-            visible_servers = self.recognize_servers()
-
-            # Проверка, видим ли текущий сервер
-            if current_server in visible_servers:
-                # Сервер найден, проверяем его доступность
-                if self.is_server_available(current_server):
-                    self.logger.info(f"Найден доступный сервер: {current_server}")
-                    return current_server
-            else:
-                # Сервер не виден, пробуем прокрутить список
-                # Определяем направление скроллинга
-                should_scroll_down = True
-
-                if visible_servers:
-                    # Если видны сервера с большими номерами, нужно скроллить вниз
-                    if min(visible_servers) > current_server:
-                        should_scroll_down = True
-                    # Если видны сервера с меньшими номерами, возможно нужно скроллить вверх
-                    elif max(visible_servers) < current_server:
-                        should_scroll_down = False
-
-                if should_scroll_down:
-                    # Скроллинг вниз
-                    self.logger.info(f"Скроллинг вниз для поиска сервера {current_server}")
-                    self.adb.swipe(
-                        self.server_scroll_start[0],
-                        self.server_scroll_start[1],
-                        self.server_scroll_end[0],
-                        self.server_scroll_end[1],
-                        duration=1500
-                    )
-                else:
-                    # Скроллинг вверх
-                    self.logger.info(f"Скроллинг вверх для поиска сервера {current_server}")
-                    self.adb.swipe(
-                        self.server_scroll_end[0],
-                        self.server_scroll_end[1],
-                        self.server_scroll_start[0],
-                        self.server_scroll_start[1],
-                        duration=1500
-                    )
-
-                time.sleep(2)  # Задержка после скроллинга
-
-                # Получаем обновленный список видимых серверов
-                updated_servers = self.recognize_servers()
-
-                # Проверяем, изменился ли список серверов после скроллинга
-                if set(updated_servers) == set(visible_servers) and visible_servers:
-                    # Список не изменился, возможно достигнут предел скроллинга
-                    self.logger.warning("Список серверов не изменился после скроллинга")
-
-                    # Ищем ближайший доступный сервер среди видимых
-                    for server in sorted(visible_servers, reverse=True):
-                        if server <= current_server and server >= end_server:
-                            if self.is_server_available(server):
-                                self.logger.info(f"Выбираем доступный сервер {server} вместо {current_server}")
-                                return server
-
-            # Переход к следующему серверу в диапазоне
-            current_server -= 1
-
-        self.logger.warning(f"Не найдено доступных серверов в диапазоне от {start_server} до {end_server}")
-        return None
+        self.logger.error(f"Не удалось выбрать сервер {server_id} или его альтернативы")
+        return False, None

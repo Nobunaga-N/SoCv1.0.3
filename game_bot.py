@@ -10,7 +10,8 @@ from typing import Optional, List, Tuple, Dict, Union
 
 from config import (
     IMAGE_PATHS, COORDINATES, SEASONS, DEFAULT_TIMEOUT, LOADING_TIMEOUT,
-    GAME_PACKAGE, GAME_ACTIVITY, TEMPLATE_MATCHING_THRESHOLD
+    GAME_PACKAGE, GAME_ACTIVITY, TEMPLATE_MATCHING_THRESHOLD,
+    OCR_REGIONS, PAUSE_SETTINGS, SERVER_RECOGNITION_SETTINGS, OCR_SETTINGS
 )
 
 
@@ -385,7 +386,7 @@ class GameBot:
 
     def select_season(self, season_id):
         """
-        Улучшенный метод выбора сезона.
+        Улучшенный метод выбора сезона с использованием настроек из конфига.
 
         Args:
             season_id: идентификатор сезона (S1, S2, S3, S4, S5, X1, X2, X3, X4)
@@ -400,58 +401,52 @@ class GameBot:
             self.logger.error(f"Сезон '{season_id}' не найден в конфигурации")
             return False
 
-        # Приблизительные координаты сезонов
-        season_y_coords = {
-            'S1': 180,
-            'S2': 220,
-            'S3': 260,
-            'S4': 300,
-            'S5': 340,
-            'X1': 380,
-            'X2': 260,  # После скроллинга
-            'X3': 300,  # После скроллинга
-            'X4': 340  # После скроллинга
-        }
+        # Используем координаты из конфига
+        season_coords = COORDINATES['seasons']
 
         # Определение необходимости скроллинга
         if season_id in ['X2', 'X3', 'X4']:
             self.logger.info(f"Скроллинг для отображения сезона {season_id}")
 
-            # Уменьшаем длину свайпа на 20% для большей точности
-            start_x, start_y = 257, 573
-            end_x, end_y = 238, 265  # Изменено с 240 на 265 (уменьшение на ~20%)
+            # Используем координаты скроллинга из конфига
+            start_x, start_y = COORDINATES['season_scroll_start']
+            end_x, end_y = COORDINATES['season_scroll_end']
 
-            # Выполняем свайп с увеличенной продолжительностью для более плавного движения
-            self.swipe(start_x, start_y, end_x, end_y, duration=1500)
+            # Выполняем свайп
+            self.swipe(start_x, start_y, end_x, end_y,
+                       duration=SERVER_RECOGNITION_SETTINGS['scroll_duration'])
 
-            # Обязательная задержка после свайпа для загрузки UI
-            time.sleep(2)
+            # Пауза после скроллинга из конфига
+            time.sleep(PAUSE_SETTINGS['after_season_scroll'])
+            self.logger.info(f"Пауза {PAUSE_SETTINGS['after_season_scroll']} секунд после скроллинга сезонов")
 
-            # Проверка успешности скроллинга (можно добавить поиск текста сезона)
+            # Проверка успешности скроллинга
             screenshot = self.adb.screenshot()
             success = self.check_season_visible(season_id, screenshot)
 
             if not success:
                 self.logger.warning(f"Сезон {season_id} не обнаружен после свайпа, пробуем еще раз")
                 # Пробуем еще раз с большим смещением
-                self.swipe(start_x, start_y, end_x, end_y - 20, duration=1500)
-                time.sleep(2)
+                self.swipe(start_x, start_y, end_x - 30, end_y,
+                           duration=SERVER_RECOGNITION_SETTINGS['scroll_duration'])
+                time.sleep(PAUSE_SETTINGS['after_season_scroll'])
+                self.logger.info(f"Дополнительная пауза {PAUSE_SETTINGS['after_season_scroll']} секунд")
 
-        # Клик по сезону с уточненными координатами
-        if season_id in season_y_coords:
-            x_coord = 250  # Координата X для клика по тексту сезона
-            y_coord = season_y_coords[season_id]
+        # Клик по сезону
+        if season_id in season_coords:
+            x_coord, y_coord = season_coords[season_id]
+
+            # Пауза перед кликом из конфига
+            time.sleep(PAUSE_SETTINGS['before_season_click'])
+            self.logger.info(f"Пауза {PAUSE_SETTINGS['before_season_click']} секунд перед кликом по сезону")
 
             # Клик по текстовой метке сезона
             self.logger.info(f"Клик по сезону {season_id} по координатам ({x_coord}, {y_coord})")
             self.click_coord(x_coord, y_coord)
 
-            # Задержка для подтверждения выбора сезона
-            time.sleep(1.5)
-
-            # Проверка успешности выбора сезона
-            # Можно добавить поиск характерных элементов UI выбранного сезона
-            # Для простоты предполагаем, что выбор успешен
+            # Пауза после клика из конфига
+            time.sleep(PAUSE_SETTINGS['after_season_click'])
+            self.logger.info(f"Пауза {PAUSE_SETTINGS['after_season_click']} секунд после выбора сезона")
 
             return True
 
@@ -459,43 +454,44 @@ class GameBot:
 
     def check_season_visible(self, season_id, screenshot):
         """
-        Проверка видимости сезона на экране.
-
-        Args:
-            season_id: идентификатор сезона
-            screenshot: скриншот экрана
-
-        Returns:
-            bool: True если сезон виден на экране, False иначе
+        Проверка видимости сезона на экране с использованием настроек OCR из конфига.
         """
-        # Ищем текст сезона с помощью OCR
-        season_text = f"Сезон {season_id}"
+        if not self.ocr_available:
+            return True
 
-        # Если OCR доступен
-        if self.ocr_available:
-            try:
-                import pytesseract
-                # Преобразование в оттенки серого
-                gray = cv2.cvtColor(screenshot, cv2.COLOR_BGR2GRAY)
-                # Бинаризация для лучшего распознавания
-                _, binary = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY_INV)
-                # Распознавание текста
-                text = pytesseract.image_to_string(binary, lang='rus+eng')
+        try:
+            import pytesseract
 
-                # Проверка наличия текста сезона
-                if season_text in text:
-                    self.logger.info(f"Сезон {season_id} обнаружен на экране")
-                    return True
-            except Exception as e:
-                self.logger.error(f"Ошибка при проверке видимости сезона: {e}")
+            # Используем область из конфига
+            x, y, w, h = OCR_REGIONS['seasons']
+            roi = screenshot[y:y + h, x:x + w]
 
-        # Если OCR недоступен или не нашел текст, используем примерное позиционирование
-        # В этом случае просто возвращаем True и полагаемся на координаты
-        return True
+            # Предобработка с настройками из конфига
+            gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+            _, binary = cv2.threshold(gray, OCR_SETTINGS['threshold_binary'],
+                                      255, cv2.THRESH_BINARY_INV)
+
+            # Распознавание с настройками из конфига
+            text = pytesseract.image_to_string(binary,
+                                               lang=OCR_SETTINGS['language'],
+                                               config=OCR_SETTINGS['config'])
+
+            # Проверка наличия сезона в тексте
+            season_text = f"Сезон {season_id}"
+            if season_text in text or season_id in text:
+                self.logger.info(f"Сезон {season_id} виден на экране")
+                return True
+
+            self.logger.warning(f"Сезон {season_id} не обнаружен в тексте: {text}")
+            return False
+
+        except Exception as e:
+            self.logger.error(f"Ошибка при проверке видимости сезона: {e}")
+            return True
 
     def select_server(self, server_id):
         """
-        Улучшенный метод выбора сервера.
+        Улучшенный метод выбора сервера с использованием настроек из конфига.
 
         Args:
             server_id: номер сервера
@@ -515,158 +511,183 @@ class GameBot:
         if not self.select_season(season_id):
             return False
 
-        # Получение диапазона серверов в сезоне
-        min_server = SEASONS[season_id]['max_server']  # Минимальный номер сервера в сезоне
-        max_server = SEASONS[season_id]['min_server']  # Максимальный номер сервера в сезоне
+        # Используем координаты серверов из конфига
+        server_coords = COORDINATES['servers']
 
-        # Порядковый номер сервера в сезоне (от новых к старым)
-        server_index = max_server - server_id
-
-        # Количество серверов на странице и расчет страницы
-        servers_per_page = 10
-
-        # Номер страницы (начиная с 0)
-        page = server_index // servers_per_page
-
-        # Индекс на странице (начиная с 0)
-        page_index = server_index % servers_per_page
-
-        self.logger.debug(
-            f"Сервер {server_id}: сезон {season_id}, индекс {server_index}, страница {page}, позиция {page_index}")
-
-        # Список видимых серверов
-        visible_servers = []
-
-        # Скроллинг до нужной страницы с проверкой видимых серверов
-        current_page = 0
-        while current_page < page:
-            self.logger.info(f"Скроллинг до страницы {current_page + 1} из {page}")
-
-            # Получаем видимые сервера перед свайпом
-            visible_servers = self.get_visible_servers()
-
-            # Если нужный сервер уже виден, прерываем скроллинг
-            if server_id in visible_servers:
-                self.logger.info(f"Сервер {server_id} уже виден на странице, прекращаем скроллинг")
-                break
-
-            # Уменьшаем длину свайпа на 20% для большей точности
-            start_x, start_y = 777, 566
-            end_x, end_y = 772, 140  # Изменено с 100 на 140 (уменьшение на ~20%)
-
-            # Выполняем свайп с увеличенной продолжительностью
-            self.swipe(start_x, start_y, end_x, end_y, duration=1500)
-
-            # Обязательная задержка после свайпа для загрузки UI
-            time.sleep(2)
-
-            current_page += 1
-
-            # Проверка успешности скроллинга
-            new_visible_servers = self.get_visible_servers()
-
-            # Если списки серверов одинаковы, значит скроллинг не выполнился
-            if set(visible_servers) == set(new_visible_servers) and len(visible_servers) > 0:
-                self.logger.warning("Скроллинг не изменил список видимых серверов, возможно достигнут конец списка")
-                break
-
-        # Повторное получение видимых серверов после всех свайпов
+        # Получение списка видимых серверов
         visible_servers = self.get_visible_servers()
 
-        # Проверка наличия целевого сервера в списке видимых
+        # Проверяем, виден ли целевой сервер
         if server_id in visible_servers:
-            # Сервер найден, кликаем по нему
-            server_coords = self.get_server_coordinates(server_id, visible_servers)
-            if server_coords:
-                self.logger.info(f"Сервер {server_id} найден на экране по координатам {server_coords}, выполняем клик")
-                self.click_coord(server_coords[0], server_coords[1])
-                time.sleep(1.5)  # Задержка после выбора сервера
+            self.logger.info(f"Сервер {server_id} уже виден на экране")
+            server_pos = self.get_server_coordinates_improved(server_id, visible_servers, server_coords)
+            if server_pos:
+                # Пауза перед кликом из конфига
+                time.sleep(PAUSE_SETTINGS['before_server_click'])
+                self.logger.info(f"Пауза {PAUSE_SETTINGS['before_server_click']} секунд перед кликом по серверу")
+
+                self.click_coord(server_pos[0], server_pos[1])
+
+                # Пауза после клика из конфига
+                time.sleep(PAUSE_SETTINGS['after_server_click'])
+                self.logger.info(f"Пауза {PAUSE_SETTINGS['after_server_click']} секунд после выбора сервера")
                 return True
         else:
-            # Целевой сервер не найден, ищем ближайший доступный сервер
-            self.logger.warning(f"Сервер {server_id} не найден в списке видимых серверов")
+            # Скроллинг до нужного сервера
+            self.logger.info(f"Сервер {server_id} не виден, выполняем скроллинг")
 
-            # Ищем ближайший доступный сервер (с меньшим номером)
-            next_server = self.find_next_available_server(server_id, visible_servers)
+            # Используем координаты скроллинга серверов из конфига
+            scroll_start_x, scroll_start_y = COORDINATES['server_scroll_start']
+            scroll_end_x, scroll_end_y = COORDINATES['server_scroll_end']
 
-            if next_server:
-                self.logger.info(f"Выбираем ближайший доступный сервер {next_server} вместо {server_id}")
-                server_coords = self.get_server_coordinates(next_server, visible_servers)
-                if server_coords:
-                    self.click_coord(server_coords[0], server_coords[1])
-                    time.sleep(1.5)  # Задержка после выбора сервера
+            # Максимальное количество попыток из конфига
+            max_attempts = SERVER_RECOGNITION_SETTINGS['max_scroll_attempts']
+
+            for attempt in range(max_attempts):
+                self.logger.info(f"Попытка скроллинга серверов {attempt + 1}/{max_attempts}")
+
+                # Выполняем скроллинг с настройками из конфига
+                self.swipe(scroll_start_x, scroll_start_y, scroll_end_x, scroll_end_y,
+                           duration=SERVER_RECOGNITION_SETTINGS['scroll_duration'])
+
+                # Пауза после скроллинга из конфига
+                time.sleep(PAUSE_SETTINGS['after_server_scroll'])
+                self.logger.info(f"Пауза {PAUSE_SETTINGS['after_server_scroll']} секунд после скроллинга серверов")
+
+                # Получаем обновленный список видимых серверов
+                visible_servers = self.get_visible_servers()
+
+                # Проверяем, найден ли нужный сервер
+                if server_id in visible_servers:
+                    self.logger.info(f"Сервер {server_id} найден после скроллинга")
+                    server_pos = self.get_server_coordinates_improved(server_id, visible_servers, server_coords)
+                    if server_pos:
+                        # Паузы из конфига
+                        time.sleep(PAUSE_SETTINGS['before_server_click'])
+                        self.logger.info(f"Пауза {PAUSE_SETTINGS['before_server_click']} секунд перед кликом")
+
+                        self.click_coord(server_pos[0], server_pos[1])
+
+                        time.sleep(PAUSE_SETTINGS['after_server_click'])
+                        self.logger.info(f"Пауза {PAUSE_SETTINGS['after_server_click']} секунд после выбора")
+                        return True
+
+                # Проверяем, не проскролили ли слишком далеко
+                if visible_servers and min(visible_servers) < server_id:
+                    self.logger.warning("Проскролили слишком далеко, ищем ближайший сервер")
+                    break
+
+            # Если точный сервер не найден, ищем ближайший доступный
+            available_server = self.find_next_available_server(server_id, visible_servers)
+            if available_server:
+                self.logger.info(f"Выбираем ближайший доступный сервер {available_server}")
+                server_pos = self.get_server_coordinates_improved(available_server, visible_servers, server_coords)
+                if server_pos:
+                    # Паузы из конфига
+                    time.sleep(PAUSE_SETTINGS['before_server_click'])
+                    self.logger.info(f"Пауза {PAUSE_SETTINGS['before_server_click']} секунд перед кликом")
+
+                    self.click_coord(server_pos[0], server_pos[1])
+
+                    time.sleep(PAUSE_SETTINGS['after_server_click'])
+                    self.logger.info(f"Пауза {PAUSE_SETTINGS['after_server_click']} секунд после выбора")
                     return True
 
-        # Если не удалось найти подходящий сервер
-        self.logger.error(f"Не удалось выбрать сервер {server_id} или подходящую замену")
+        self.logger.error(f"Не удалось выбрать сервер {server_id}")
         return False
 
     def get_visible_servers(self):
         """
-        Получение списка видимых на экране серверов.
+        Получение списка видимых серверов с использованием настроек OCR из конфига.
 
         Returns:
             list: список видимых серверов (номеров)
         """
         visible_servers = []
 
-        # Получение скриншота
-        screenshot = self.adb.screenshot()
+        if not self.ocr_available:
+            self.logger.warning("OCR не доступен, невозможно распознать сервера")
+            return []
 
-        # Если OCR доступен, используем его для распознавания номеров серверов
-        if self.ocr_available:
-            try:
-                import pytesseract
-                # Преобразование в оттенки серого
-                gray = cv2.cvtColor(screenshot, cv2.COLOR_BGR2GRAY)
-                # Бинаризация для лучшего распознавания
-                _, binary = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY_INV)
-                # Распознавание текста
-                text = pytesseract.image_to_string(binary, lang='rus+eng')
+        try:
+            import pytesseract
 
-                # Поиск всех упоминаний "Море #XXX"
-                import re
-                server_pattern = r"Море\s+#(\d+)"
-                matches = re.findall(server_pattern, text)
+            # Получение скриншота
+            screenshot = self.adb.screenshot()
 
-                if matches:
-                    for match in matches:
-                        try:
-                            server_id = int(match)
-                            visible_servers.append(server_id)
-                        except ValueError:
-                            continue
+            # Используем область для серверов из конфига
+            x, y, w, h = OCR_REGIONS['servers']
+            roi = screenshot[y:y + h, x:x + w]
 
-                    self.logger.info(f"Распознаны сервера на экране: {visible_servers}")
-                    return sorted(visible_servers, reverse=True)  # Сортируем по убыванию
+            # Улучшенная предобработка с настройками из конфига
+            gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
 
-            except Exception as e:
-                self.logger.error(f"Ошибка при распознавании серверов: {e}")
+            results = []
 
-        # Если OCR недоступен или не удалось распознать сервера,
-        # возвращаем примерный список серверов на основе текущего скроллинга
-        # Этот подход менее надежен, но лучше, чем ничего
+            # Метод 1: Стандартная бинаризация с настройками из конфига
+            _, binary = cv2.threshold(gray, OCR_SETTINGS['threshold_binary'],
+                                      255, cv2.THRESH_BINARY_INV)
+            text1 = pytesseract.image_to_string(binary,
+                                                lang=OCR_SETTINGS['language'],
+                                                config=OCR_SETTINGS['config'])
+            results.append(text1)
 
-        # Получаем текущий сезон (примерно)
-        current_season = None
-        for season_id, coords in self.season_y_coords.items():
-            # Здесь нужно добавить логику определения текущего сезона
-            # Для простоты предположим, что это S1
-            current_season = 'S1'
-            break
+            # Метод 2: Адаптивная бинаризация с настройками из конфига
+            binary_adaptive = cv2.adaptiveThreshold(
+                gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                cv2.THRESH_BINARY_INV,
+                OCR_SETTINGS['threshold_adaptive_block_size'],
+                OCR_SETTINGS['threshold_adaptive_c']
+            )
+            text2 = pytesseract.image_to_string(binary_adaptive,
+                                                lang=OCR_SETTINGS['language'],
+                                                config=OCR_SETTINGS['config'])
+            results.append(text2)
 
-        if current_season and current_season in SEASONS:
-            min_server = SEASONS[current_season]['max_server']
-            max_server = SEASONS[current_season]['min_server']
+            # Метод 3: С увеличением изображения (настройки из конфига)
+            resize_factor = OCR_SETTINGS['resize_factor']
+            resized_roi = cv2.resize(roi, (w * resize_factor, h * resize_factor),
+                                     interpolation=cv2.INTER_CUBIC)
+            gray_resized = cv2.cvtColor(resized_roi, cv2.COLOR_BGR2GRAY)
+            _, binary_resized = cv2.threshold(gray_resized, OCR_SETTINGS['threshold_binary'],
+                                              255, cv2.THRESH_BINARY_INV)
+            text3 = pytesseract.image_to_string(binary_resized,
+                                                lang=OCR_SETTINGS['language'],
+                                                config=OCR_SETTINGS['config'])
+            results.append(text3)
 
-            # Примерно оцениваем видимые сервера
-            # Предполагаем, что видны от 5 до 8 серверов
-            visible_count = 6
-            start_server = max_server
+            # Объединяем все результаты
+            combined_text = ' '.join(results)
 
-            for i in range(visible_count):
-                if start_server - i >= min_server:
-                    visible_servers.append(start_server - i)
+            # Поиск номеров серверов
+            import re
+            patterns = [
+                r"Море\s*#(\d{1,3})",  # "Море #XXX"
+                r"#(\d{1,3})",  # "#XXX"
+                r"(\d{3})"  # Просто три цифры
+            ]
+
+            servers_found = set()
+            for pattern in patterns:
+                matches = re.findall(pattern, combined_text)
+                for match in matches:
+                    try:
+                        server_id = int(match)
+                        # Фильтруем только реалистичные номера серверов
+                        if 1 <= server_id <= 619:
+                            servers_found.add(server_id)
+                    except ValueError:
+                        continue
+
+            visible_servers = sorted(list(servers_found), reverse=True)
+            if visible_servers:
+                self.logger.info(f"Распознанные сервера на экране: {visible_servers}")
+            else:
+                self.logger.warning("Не удалось распознать сервера с помощью OCR")
+
+        except Exception as e:
+            self.logger.error(f"Ошибка при распознавании серверов: {e}")
+            visible_servers = []
 
         return visible_servers
 
@@ -682,55 +703,63 @@ class GameBot:
             int: номер следующего доступного сервера или None
         """
         if not visible_servers:
+            self.logger.warning("Список видимых серверов пуст")
             return None
 
         # Сортируем видимые сервера по убыванию
         visible_servers = sorted(visible_servers, reverse=True)
 
         # Ищем ближайший доступный сервер (с меньшим номером)
-        next_server = None
-
         for server in visible_servers:
             if server < target_server:
-                next_server = server
-                break
+                self.logger.info(f"Найден ближайший доступный сервер {server} (меньше целевого {target_server})")
+                return server
 
-        # Если не нашли сервер с меньшим номером, берем первый доступный
-        if next_server is None and visible_servers:
-            next_server = visible_servers[0]
+        # Если не нашли сервер с меньшим номером, берем наибольший доступный
+        if visible_servers:
+            self.logger.info(f"Выбираем наибольший доступный сервер {visible_servers[0]}")
+            return visible_servers[0]
 
-        return next_server
+        return None
 
-    def get_server_coordinates(self, server_id, visible_servers):
+    def get_server_coordinates_improved(self, server_id, visible_servers, server_coords):
         """
-        Получение координат для клика по серверу.
+        ИСПРАВЛЕННЫЙ метод получения координат для клика по серверу.
 
         Args:
             server_id: номер сервера
             visible_servers: список видимых серверов
+            server_coords: словарь с базовыми координатами серверов
 
         Returns:
             tuple: (x, y) координаты для клика по серверу или None
         """
-        # Если сервер не в списке видимых, возвращаем None
         if server_id not in visible_servers:
+            self.logger.warning(f"Сервер {server_id} не найден в списке видимых серверов: {visible_servers}")
             return None
 
-        # Определяем индекс сервера в списке видимых (сортированных по убыванию)
-        visible_servers = sorted(visible_servers, reverse=True)
-        index = visible_servers.index(server_id)
+        # Сортируем видимые сервера по убыванию (как они отображаются на экране)
+        visible_servers_sorted = sorted(visible_servers, reverse=True)
 
-        # Базовые координаты для первого сервера
-        base_x = 500  # Примерная X-координата
-        base_y = 150  # Примерная Y-координата для первого сервера в списке
+        try:
+            index = visible_servers_sorted.index(server_id)
+        except ValueError:
+            self.logger.error(f"Сервер {server_id} не найден в отсортированном списке")
+            return None
 
-        # Вертикальное смещение между серверами
-        y_offset = 40
+        # Определяем позицию сервера (два столбца)
+        row = index // 2  # Номер строки (0, 1, 2, ...)
+        column = index % 2  # Столбец (0 - левый, 1 - правый)
 
-        # Рассчитываем координаты для клика
-        x = base_x
-        y = base_y + index * y_offset
+        # Рассчитываем координаты
+        if column == 0:  # Левый столбец
+            x = server_coords['left_column_x']
+        else:  # Правый столбец
+            x = server_coords['right_column_x']
 
+        y = server_coords['base_y'] + row * server_coords['step_y']
+
+        self.logger.info(f"Сервер {server_id}: индекс {index}, строка {row}, столбец {column}, координаты ({x}, {y})")
         return (x, y)
 
     def is_server_available(self, server_id):
@@ -749,28 +778,18 @@ class GameBot:
 
     def find_skip_button(self, max_attempts=None, timeout=None, use_color_analysis=True):
         """
-        Поиск и клик по кнопке "ПРОПУСТИТЬ".
-        Использует комбинацию методов OCR и обработки изображения для
-        надёжного распознавания на разных фонах.
-
-        Args:
-            max_attempts: максимальное количество попыток, None - бесконечные попытки
-            timeout: таймаут между попытками в секундах
-            use_color_analysis: использовать ли анализ по цвету (для первых шагов после загрузки отключаем)
-
-        Returns:
-            bool: True если кнопка найдена и нажата, False иначе
+        Улучшенный поиск кнопки ПРОПУСТИТЬ с использованием настроек из конфига.
         """
         self.logger.info("Поиск кнопки ПРОПУСТИТЬ")
 
-        # Координаты области, где обычно находится кнопка ПРОПУСТИТЬ
-        region = (1040, 12, 200, 60)
-        skip_position = (1142, 42)  # Позиция, где обычно находится кнопка ПРОПУСТИТЬ
+        # Используем область из конфига
+        region = OCR_REGIONS['skip_button']
+        skip_position = COORDINATES['skip_button']
 
         attempt = 0
         while max_attempts is None or attempt < max_attempts:
             attempt += 1
-            if attempt % 10 == 0:  # Логируем каждые 10 попыток
+            if attempt % 10 == 0:
                 self.logger.info(f"Попытка {attempt} найти кнопку ПРОПУСТИТЬ")
 
             # Получение скриншота
@@ -781,65 +800,63 @@ class GameBot:
                 continue
 
             # Вырезаем область интереса
-            if region:
-                x, y, w, h = region
-                roi = screenshot[y:y + h, x:x + w]
-            else:
-                roi = screenshot
+            x, y, w, h = region
+            roi = screenshot[y:y + h, x:x + w]
 
             # Преобразование в оттенки серого
             gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
 
-            # Различные методы обработки для улучшения OCR
             try:
                 import pytesseract
 
+                # Различные методы обработки с настройками из конфига
+                methods_results = []
+
                 # МЕТОД 1: Стандартная бинаризация
-                _, binary = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY_INV)
-                result1 = pytesseract.image_to_string(binary, lang='rus+eng')
+                _, binary = cv2.threshold(gray, OCR_SETTINGS['threshold_binary'],
+                                          255, cv2.THRESH_BINARY_INV)
+                result1 = pytesseract.image_to_string(binary,
+                                                      lang=OCR_SETTINGS['language'],
+                                                      config=OCR_SETTINGS['config'])
+                methods_results.append(result1)
 
                 # МЕТОД 2: Инвертированная бинаризация
-                _, binary_inv = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
-                result2 = pytesseract.image_to_string(binary_inv, lang='rus+eng')
+                _, binary_inv = cv2.threshold(gray, OCR_SETTINGS['threshold_binary'],
+                                              255, cv2.THRESH_BINARY)
+                result2 = pytesseract.image_to_string(binary_inv,
+                                                      lang=OCR_SETTINGS['language'],
+                                                      config=OCR_SETTINGS['config'])
+                methods_results.append(result2)
 
                 # МЕТОД 3: Адаптивная бинаризация
                 binary_adaptive = cv2.adaptiveThreshold(
                     gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                    cv2.THRESH_BINARY_INV, 11, 2
+                    cv2.THRESH_BINARY_INV,
+                    OCR_SETTINGS['threshold_adaptive_block_size'],
+                    OCR_SETTINGS['threshold_adaptive_c']
                 )
-                result3 = pytesseract.image_to_string(binary_adaptive, lang='rus+eng')
+                result3 = pytesseract.image_to_string(binary_adaptive,
+                                                      lang=OCR_SETTINGS['language'],
+                                                      config=OCR_SETTINGS['config'])
+                methods_results.append(result3)
 
-                # МЕТОД 4: Гистограммное выравнивание
-                equalized = cv2.equalizeHist(gray)
-                _, binary_eq = cv2.threshold(equalized, 150, 255, cv2.THRESH_BINARY_INV)
-                result4 = pytesseract.image_to_string(binary_eq, lang='rus+eng')
+                # МЕТОД 4: Увеличение масштаба
+                resize_factor = OCR_SETTINGS['resize_factor']
+                resized = cv2.resize(gray, (w * resize_factor, h * resize_factor),
+                                     interpolation=cv2.INTER_CUBIC)
+                _, binary_resized = cv2.threshold(resized, OCR_SETTINGS['threshold_binary'],
+                                                  255, cv2.THRESH_BINARY_INV)
+                result4 = pytesseract.image_to_string(binary_resized,
+                                                      lang=OCR_SETTINGS['language'],
+                                                      config=OCR_SETTINGS['config'])
+                methods_results.append(result4)
 
-                # МЕТОД 5: Морфологические операции для удаления шума
-                kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-                morphed = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
-                result5 = pytesseract.image_to_string(morphed, lang='rus+eng')
-
-                # МЕТОД 6: Увеличение масштаба (для улучшения распознавания мелкого текста)
-                resized = cv2.resize(gray, (w * 2, h * 2), interpolation=cv2.INTER_CUBIC)
-                _, binary_resized = cv2.threshold(resized, 150, 255, cv2.THRESH_BINARY_INV)
-                result6 = pytesseract.image_to_string(binary_resized, lang='rus+eng')
-
-                # МЕТОД 7: Повышение контраста
-                alpha = 1.5  # Коэффициент контраста
-                adjusted = cv2.convertScaleAbs(gray, alpha=alpha, beta=0)
-                _, binary_adjusted = cv2.threshold(adjusted, 150, 255, cv2.THRESH_BINARY_INV)
-                result7 = pytesseract.image_to_string(binary_adjusted, lang='rus+eng')
-
-                # Объединяем результаты всех методов
-                results = [result1, result2, result3, result4, result5, result6, result7]
-
-                # Проверяем каждый результат на наличие слова "ПРОПУСТИТЬ"
-                # Используем различные варианты написания для учета потенциальных ошибок распознавания
+                # Проверяем каждый результат
                 skip_variants = ["ПРОПУСТИТЬ", "ПРОПУСТИTЬ", "ПРОNYСТИТЬ", "ПPОПУСТИТЬ",
                                  "ПРОПУCTИТЬ", "ПРOПУСТИТЬ", "ПPOПУСТИТЬ", "ПPOПУCTИTЬ",
                                  "SKIP", "ПРОПУСТИТ", "ПPОПУCTИTb", "ПРОПУCТИТЬ"]
 
-                for i, result in enumerate(results):
+                for i, result in enumerate(methods_results):
                     result_upper = result.upper()
                     for variant in skip_variants:
                         if variant in result_upper:
@@ -847,8 +864,7 @@ class GameBot:
                             self.click_coord(skip_position[0], skip_position[1])
                             return True
 
-                    # Проверка на нечеткое соответствие для еще большей надежности
-                    # С порогом менее строгим, чтобы учесть больше вариаций
+                    # Проверка на нечеткое соответствие
                     if self._is_text_similar("ПРОПУСТИТЬ", result_upper, threshold=0.6):
                         self.logger.info(f"Текст, похожий на 'ПРОПУСТИТЬ', найден методом {i + 1}")
                         self.click_coord(skip_position[0], skip_position[1])
@@ -857,47 +873,11 @@ class GameBot:
             except Exception as e:
                 self.logger.error(f"Ошибка при распознавании текста: {e}")
 
-            # МЕТОД 8: Поиск по цветовым характеристикам (применяем только если разрешено)
-            # (Зеленый текст "ПРОПУСТИТЬ" часто имеет определенный диапазон HSV)
-            if use_color_analysis:
-                try:
-                    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-
-                    # Определение диапазонов HSV для зеленого текста (настроить по вашим изображениям)
-                    lower_green = np.array([40, 50, 50])
-                    upper_green = np.array([80, 255, 255])
-
-                    # Создание маски для зеленого текста
-                    green_mask = cv2.inRange(hsv, lower_green, upper_green)
-
-                    # Вычисление общего числа пикселей в маске и процента зеленых пикселей
-                    total_pixels = roi.shape[0] * roi.shape[1]
-                    green_pixels = np.sum(green_mask > 0)
-                    green_percent = green_pixels / total_pixels
-
-                    # Проверка характерного расположения зеленых пикселей для кнопки ПРОПУСТИТЬ
-                    # (только если достаточное количество зеленых пикселей и они расположены
-                    # в правой части области, где обычно находится кнопка)
-                    if green_percent > 0.05 and green_percent < 0.3:
-                        # Вычисление центра масс зеленых пикселей
-                        M = cv2.moments(green_mask)
-                        if M["m00"] > 0:
-                            cx = int(M["m10"] / M["m00"])
-                            cy = int(M["m01"] / M["m00"])
-
-                            # Проверка, что центр масс в правой части области
-                            if cx > w * 0.5:
-                                self.logger.info("Кнопка ПРОПУСТИТЬ найдена по цветовому анализу")
-                                self.click_coord(skip_position[0], skip_position[1])
-                                return True
-
-                except Exception as e:
-                    self.logger.error(f"Ошибка при поиске по цвету: {e}")
-
             time.sleep(0.5 if timeout is None else timeout)
 
-        # Эта часть кода выполнится только если задан max_attempts
-        self.logger.warning(f"Не удалось найти кнопку ПРОПУСТИТЬ за {max_attempts} попыток")
+        # Эта часть выполнится только если задан max_attempts
+        if max_attempts is not None:
+            self.logger.warning(f"Не удалось найти кнопку ПРОПУСТИТЬ за {max_attempts} попыток")
         return False
 
     def wait_for_image_in_region(self, image_key, region=None, timeout=10, threshold=TEMPLATE_MATCHING_THRESHOLD):
@@ -1757,11 +1737,13 @@ class GameBot:
                 self.logger.info(
                     "Шаг 93: Ждем 7 секунд, ищем изображение molly.png и нажимаем на координаты (1142, 42)")
                 time.sleep(7)
-                if self.wait_for_image('molly', timeout=30):
+                if self.wait_for_image('molly', timeout=40):
                     self.click_coord(1142, 42)
+                    time.sleep(3)
                 else:
                     self.logger.warning("Изображение molly.png не найдено, выполняем клик по координатам")
                     self.click_coord(1142, 42)
+                    time.sleep(3)
 
             # Шаг 94: Ищем слово ПРОПУСТИТЬ и кликаем на него
             if start_from_step <= 94:
@@ -1771,7 +1753,7 @@ class GameBot:
             # Шаг 95: Ищем картинку coins.png и нажимаем на координаты
             if start_from_step <= 95:
                 self.logger.info("Шаг 95: Ищем картинку coins.png и нажимаем на координаты (931, 620)")
-                if self.click_image("coins", timeout=15):
+                if self.click_image("coins", timeout=25):
                     self.logger.info("Картинка coins.png найдена и нажата")
                 else:
                     self.logger.warning("Картинка coins.png не найдена, нажимаем по координатам")
