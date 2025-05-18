@@ -570,7 +570,7 @@ class GameBot:
 
     def _scroll_and_find_server(self, server_id, initial_visible_servers, server_coords):
         """
-        ИСПРАВЛЕННЫЙ скроллинг с поиском сервера с улучшенной логикой.
+        ИСПРАВЛЕННЫЙ скроллинг с поиском сервера с улучшенной логикой и отладкой.
         """
         self.logger.info(f"Начинаем скроллинг для поиска сервера {server_id}")
 
@@ -593,7 +593,7 @@ class GameBot:
             end_x, end_y = COORDINATES['server_scroll_start']
 
         # УВЕЛИЧЕНО максимальное количество попыток скроллинга
-        max_attempts = SERVER_RECOGNITION_SETTINGS['max_scroll_attempts'] * 2  # Было 5, стало 10
+        max_attempts = SERVER_RECOGNITION_SETTINGS['max_scroll_attempts'] * 2  # Было 5, стало 14
         previous_servers = set(initial_visible_servers)
 
         best_server_found = None  # Лучший найденный сервер
@@ -609,8 +609,10 @@ class GameBot:
             # Пауза после скроллинга
             time.sleep(PAUSE_SETTINGS['after_server_scroll'])
 
-            # Получаем обновленный список видимых серверов
-            visible_servers = self.get_visible_servers()
+            # Получаем обновленный список видимых серверов с отладкой
+            # Включаем отладочное сохранение для первых 3 попыток
+            debug_save = attempt < 3
+            visible_servers = self.get_visible_servers(debug_save=debug_save)
             self.logger.info(f"После скроллинга видимые сервера: {visible_servers}")
 
             # Проверяем, найден ли целевой сервер
@@ -773,9 +775,13 @@ class GameBot:
         self.logger.error(f"Не удалось получить координаты для сервера {server_id}")
         return False
 
-    def get_visible_servers(self):
+    def get_visible_servers(self, debug_save=False):
         """
-        УЛУЧШЕННЫЙ метод получения списка видимых серверов с расширенной областью OCR.
+        УЛУЧШЕННЫЙ метод получения списка видимых серверов с расширенной областью OCR и строгой фильтрацией.
+        Добавлена опция сохранения изображения области OCR для отладки.
+
+        Args:
+            debug_save: если True, сохраняет изображение области OCR для отладки
 
         Returns:
             list: список видимых серверов (номеров)
@@ -797,6 +803,26 @@ class GameBot:
             roi = screenshot[y:y + h, x:x + w]
 
             self.logger.debug(f"Область OCR для серверов: x={x}, y={y}, w={w}, h={h}")
+
+            # Отладочное сохранение области OCR
+            if debug_save:
+                import os
+                debug_dir = "debug_ocr"
+                os.makedirs(debug_dir, exist_ok=True)
+
+                # Сохраняем полный скриншот с выделенной областью
+                import time
+                timestamp = int(time.time())
+
+                # Рисуем прямоугольник вокруг области OCR
+                debug_screenshot = screenshot.copy()
+                cv2.rectangle(debug_screenshot, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                cv2.imwrite(f"{debug_dir}/screenshot_with_ocr_area_{timestamp}.png", debug_screenshot)
+
+                # Сохраняем саму область OCR
+                cv2.imwrite(f"{debug_dir}/ocr_roi_{timestamp}.png", roi)
+                self.logger.info(
+                    f"Сохранены отладочные изображения: screenshot_with_ocr_area_{timestamp}.png и ocr_roi_{timestamp}.png")
 
             # Улучшенная предобработка с настройками из конфига
             gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
@@ -843,34 +869,79 @@ class GameBot:
                                                 config=OCR_SETTINGS['config'])
             results.append(text4)
 
+            # Дополнительное сохранение обработанных изображений для отладки
+            if debug_save:
+                cv2.imwrite(f"{debug_dir}/binary_{timestamp}.png", binary)
+                cv2.imwrite(f"{debug_dir}/binary_adaptive_{timestamp}.png", binary_adaptive)
+                cv2.imwrite(f"{debug_dir}/binary_resized_{timestamp}.png", binary_resized)
+                cv2.imwrite(f"{debug_dir}/binary_inv_{timestamp}.png", binary_inv)
+
             # Объединяем все результаты
             combined_text = ' '.join(results)
             self.logger.debug(f"Объединенный текст OCR: {combined_text}")
+
+            # Отладочная информация по каждому методу
+            for i, text in enumerate(results):
+                self.logger.debug(f"Метод {i + 1} OCR: {repr(text)}")
 
             # Поиск номеров серверов с улучшенными паттернами
             import re
             patterns = [
                 r"Море\s*#(\d{1,3})",  # "Море #XXX"
                 r"#(\d{1,3})",  # "#XXX"
-                r"(\d{3})",  # Просто три цифры
-                r"(\d{1,3})"  # Любые цифры от 1 до 3 знаков
+                r"\b(\d{3})\b",  # Ровно три цифры, окруженные границами слов
+                r"\b(\d{1,3})\b"  # Любые цифры от 1 до 3 знаков, окруженные границами слов
             ]
 
             servers_found = set()
-            for pattern in patterns:
+            for pattern_idx, pattern in enumerate(patterns):
                 matches = re.findall(pattern, combined_text)
+                self.logger.debug(
+                    f"Паттерн {pattern_idx + 1} ({pattern}): найдено {len(matches)} совпадений: {matches}")
+
                 for match in matches:
                     try:
                         server_id = int(match)
-                        # Фильтруем только реалистичные номера серверов
-                        if 1 <= server_id <= 619:
+
+                        # СТРОГАЯ фильтрация по диапазону серверов
+                        min_server = OCR_SETTINGS['min_server_number']
+                        max_server = OCR_SETTINGS['max_server_number']
+
+                        if min_server <= server_id <= max_server:
                             servers_found.add(server_id)
+                        else:
+                            self.logger.debug(
+                                f"Отфильтрован сервер {server_id} (вне диапазона {min_server}-{max_server})")
+
                     except ValueError:
                         continue
 
-            visible_servers = sorted(list(servers_found), reverse=True)
+            # Дополнительная фильтрация: убираем явно ошибочные числа
+            filtered_servers = set()
+            for server_id in servers_found:
+                # Проверяем, что номер сервера разумный
+                if server_id >= 100:  # Минимум трехзначный номер
+                    filtered_servers.add(server_id)
+                else:
+                    self.logger.debug(f"Отфильтрован сервер {server_id} (слишком маленький номер)")
+
+            visible_servers = sorted(list(filtered_servers), reverse=True)
+
             if visible_servers:
                 self.logger.info(f"Распознанные сервера на экране: {visible_servers}")
+
+                # Анализ распределения по столбцам
+                left_column_servers = []
+                right_column_servers = []
+                for i, server in enumerate(visible_servers):
+                    if i % 2 == 0:
+                        left_column_servers.append(server)
+                    else:
+                        right_column_servers.append(server)
+
+                self.logger.debug(f"Левый столбец: {left_column_servers}")
+                self.logger.debug(f"Правый столбец: {right_column_servers}")
+
             else:
                 self.logger.warning("Не удалось распознать сервера с помощью OCR")
                 self.logger.debug(f"Полный текст для отладки: {combined_text}")
@@ -933,7 +1004,7 @@ class GameBot:
 
     def get_server_coordinates_improved(self, server_id, visible_servers, server_coords):
         """
-        ИСПРАВЛЕННЫЙ метод получения координат для клика по серверу.
+        ИСПРАВЛЕННЫЙ метод получения координат для клика по серверу с отладочной информацией.
 
         Args:
             server_id: номер сервера
@@ -949,6 +1020,7 @@ class GameBot:
 
         # Сортируем видимые сервера по убыванию (как они отображаются на экране)
         visible_servers_sorted = sorted(visible_servers, reverse=True)
+        self.logger.debug(f"Отсортированные видимые сервера: {visible_servers_sorted}")
 
         try:
             index = visible_servers_sorted.index(server_id)
@@ -960,15 +1032,25 @@ class GameBot:
         row = index // 2  # Номер строки (0, 1, 2, ...)
         column = index % 2  # Столбец (0 - левый, 1 - правый)
 
-        # Рассчитываем координаты
+        # Рассчитываем координаты с ИСПРАВЛЕННЫМИ значениями
         if column == 0:  # Левый столбец
-            x = server_coords['left_column_x']
+            x = server_coords['left_column_x']  # 466 вместо 500
         else:  # Правый столбец
-            x = server_coords['right_column_x']
+            x = server_coords['right_column_x']  # 816 вместо 900
 
-        y = server_coords['base_y'] + row * server_coords['step_y']
+        y = server_coords['base_y'] + row * server_coords['step_y']  # 136 + row * 90
 
         self.logger.info(f"Сервер {server_id}: индекс {index}, строка {row}, столбец {column}, координаты ({x}, {y})")
+
+        # Дополнительная отладочная информация
+        expected_servers_in_row = []
+        if row * 2 < len(visible_servers_sorted):
+            expected_servers_in_row.append(visible_servers_sorted[row * 2])
+        if row * 2 + 1 < len(visible_servers_sorted):
+            expected_servers_in_row.append(visible_servers_sorted[row * 2 + 1])
+
+        self.logger.debug(f"В строке {row} ожидаются сервера: {expected_servers_in_row}")
+
         return (x, y)
 
     def is_server_available(self, server_id):
