@@ -145,7 +145,7 @@ class OptimizedServerSelector:
 
     def _validate_servers(self, servers_dict: Dict[int, Tuple[int, int]]) -> Dict[int, Tuple[int, int]]:
         """
-        Валидация найденных серверов.
+        Валидация найденных серверов с улучшенной логикой.
 
         Args:
             servers_dict: словарь серверов {server_id: (x, y)}
@@ -168,18 +168,27 @@ class OptimizedServerSelector:
                 self.logger.debug(f"Сервер {server_id} имеет координаты вне области поиска")
                 continue
 
-            # Проверка на логичность последовательности (если есть история)
+            # Более мягкая проверка на логичность последовательности
             if self.last_servers:
-                # Проверяем, что новые сервера в разумном диапазоне от предыдущих
                 min_last = min(self.last_servers)
                 max_last = max(self.last_servers)
 
-                # Если сервер слишком далеко от предыдущих, возможно это ошибка OCR
-                if server_id < min_last - 50 or server_id > max_last + 50:
+                # Увеличиваем допустимый диапазон с 50 до 100
+                if server_id < min_last - 100 or server_id > max_last + 100:
                     self.logger.debug(f"Сервер {server_id} слишком далеко от предыдущих результатов")
                     continue
 
             validated[server_id] = coords
+
+        # Если валидных серверов слишком мало, добавляем больше кандидатов
+        if len(validated) < 5 and len(servers_dict) > len(validated):
+            self.logger.info("Мало валидных серверов, добавляем с мягкими критериями")
+            # Добавляем сервера которые прошли только базовые проверки
+            for server_id, coords in servers_dict.items():
+                if server_id not in validated and 100 <= server_id <= 619:
+                    validated[server_id] = coords
+                    if len(validated) >= 10:  # Ограничиваем общее количество
+                        break
 
         return validated
 
@@ -276,33 +285,42 @@ class OptimizedServerSelector:
         timestamp = int(time.time())
         cv2.imwrite(f"{debug_dir}/{prefix}_{timestamp}.png", image)
 
-    def find_server_coordinates(self, server_id: int) -> Optional[Tuple[int, int]]:
+    def find_server_coordinates(self, server_id: int, attempts: int = 3) -> Optional[Tuple[int, int]]:
         """
-        Поиск координат конкретного сервера.
+        Поиск координат конкретного сервера с несколькими попытками.
 
         Args:
             server_id: номер сервера
+            attempts: количество попыток поиска
 
         Returns:
             tuple: (x, y) координаты сервера или None
         """
-        servers_dict = self.get_servers_with_coordinates(debug_save=True)
+        for attempt in range(attempts):
+            servers_dict = self.get_servers_with_coordinates(debug_save=(attempt == 0))
 
-        if server_id in servers_dict:
-            return servers_dict[server_id]
+            # Прямой поиск целевого сервера
+            if server_id in servers_dict:
+                self.logger.info(f"Сервер {server_id} найден точно на попытке {attempt + 1}")
+                return servers_dict[server_id]
 
-        # Поиск ближайшего сервера с более строгими критериями
-        if servers_dict:
-            closest_server = min(servers_dict.keys(),
-                               key=lambda s: abs(s - server_id))
-            # Уменьшаем допустимую разницу с 5 до 3 для большей точности
-            if abs(closest_server - server_id) <= 3:
-                self.logger.info(f"Используем близкий сервер {closest_server} вместо {server_id}")
-                return servers_dict[closest_server]
+            # Поиск ближайшего сервера (только на последней попытке)
+            if attempt == attempts - 1 and servers_dict:
+                closest_server = min(servers_dict.keys(),
+                                   key=lambda s: abs(s - server_id))
+
+                difference = abs(closest_server - server_id)
+                if difference <= 1:  # Только если очень близко
+                    self.logger.info(f"Используем очень близкий сервер {closest_server} вместо {server_id}")
+                    return servers_dict[closest_server]
+
+            # Небольшая пауза между попытками
+            if attempt < attempts - 1:
+                time.sleep(0.3)
 
         return None
 
-    def scroll_to_server_range(self, target_server: int, current_servers: List[int]) -> bool:
+    def scroll_to_server_range(self, target_server: int, current_servers: List[int]) -> str:
         """
         Интеллектуальный скроллинг к диапазону сервера.
 
@@ -311,35 +329,62 @@ class OptimizedServerSelector:
             current_servers: текущие видимые сервера
 
         Returns:
-            bool: True если скроллинг выполнен, False если цель уже видна
+            str: 'found' если цель видна, 'small' если выполнен мелкий скроллинг,
+                 'regular' если обычный, 'none' если скроллинг не нужен
         """
         if not current_servers:
             self.logger.warning("Нет текущих серверов для определения направления скроллинга")
-            return True  # Выполняем скроллинг, если не знаем где мы
+            self._perform_regular_scroll(target_server, [])
+            return 'regular'
 
         min_visible = min(current_servers)
         max_visible = max(current_servers)
 
         self.logger.info(f"Целевой сервер: {target_server}, видимые: {min_visible}-{max_visible}")
 
-        # Если целевой сервер уже видимый или близко к видимому
+        # Если целевой сервер уже видимый
         if min_visible <= target_server <= max_visible:
-            return False
+            return 'found'
 
-        # Если целевой сервер близко к видимому диапазону, используем мелкий скроллинг
-        if abs(target_server - min_visible) <= 5 or abs(target_server - max_visible) <= 5:
-            return self._perform_small_scroll(target_server, current_servers)
+        # Определяем расстояние до цели
+        distance_to_min = abs(target_server - min_visible)
+        distance_to_max = abs(target_server - max_visible)
+        min_distance = min(distance_to_min, distance_to_max)
 
-        # Иначе выполняем обычный скроллинг
-        return self._perform_regular_scroll(target_server, current_servers)
+        # Если очень близко (1-3 сервера), используем мелкий скроллинг
+        if min_distance <= 3:
+            self._perform_small_scroll(target_server, current_servers)
+            return 'small'
+        # Если близко (4-8 серверов), пробуем мелкий скроллинг
+        elif min_distance <= 8:
+            self._perform_small_scroll(target_server, current_servers)
+            return 'small'
+        # Если далеко, используем обычный скроллинг
+        else:
+            self._perform_regular_scroll(target_server, current_servers)
+            return 'regular'
 
     def _perform_small_scroll(self, target_server: int, current_servers: List[int]) -> bool:
-        """Выполнение мелкого скроллинга."""
+        """Выполнение мелкого скроллинга с улучшенной точностью."""
         self.logger.info(f"Выполняем мелкий скроллинг к серверу {target_server}")
 
-        min_visible = min(current_servers)
-        scroll_down = target_server < min_visible
+        if not current_servers:
+            # Если нет данных о текущих серверах, делаем скроллинг вниз
+            scroll_down = True
+        else:
+            min_visible = min(current_servers)
+            max_visible = max(current_servers)
+            # Определяем направление более точно
+            if target_server < min_visible:
+                scroll_down = True
+            elif target_server > max_visible:
+                scroll_down = False
+            else:
+                # Цель в диапазоне, но не найдена - возможно нужно небольшой сдвиг
+                # Определяем к какому краю диапазона ближе
+                scroll_down = abs(target_server - min_visible) < abs(target_server - max_visible)
 
+        # Используем более мелкий шаг скроллинга
         if scroll_down:
             start_coords = COORDINATES['server_small_scroll_start']
             end_coords = COORDINATES['server_small_scroll_end']
@@ -347,8 +392,9 @@ class OptimizedServerSelector:
             start_coords = COORDINATES['server_small_scroll_end']
             end_coords = COORDINATES['server_small_scroll_start']
 
-        self.adb.swipe(*start_coords, *end_coords,
-                      duration=SERVER_RECOGNITION_SETTINGS['small_scroll_duration'])
+        # Выполняем еще более мелкий скроллинг
+        small_duration = SERVER_RECOGNITION_SETTINGS['small_scroll_duration'] // 2  # Половина обычного времени
+        self.adb.swipe(*start_coords, *end_coords, duration=small_duration)
         time.sleep(PAUSE_SETTINGS['after_server_scroll'])
         return True
 
