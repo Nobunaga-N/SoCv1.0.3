@@ -1,6 +1,6 @@
 """
-Оптимизированный модуль для выбора серверов с улучшенным OCR.
-Урезанная версия с основной функциональностью.
+Оптимизированный модуль для выбора серверов с улучшенным OCR и логикой скроллинга.
+Исправления: точный скроллинг, лучшая фильтрация OCR, адаптивный поиск.
 """
 import cv2
 import numpy as np
@@ -9,7 +9,7 @@ import logging
 import time
 from typing import Optional, List, Tuple, Dict
 
-from config import SEASONS, COORDINATES, PAUSE_SETTINGS, OCR_REGIONS
+from config import SEASONS, COORDINATES, PAUSE_SETTINGS, OCR_REGIONS, SERVER_RECOGNITION_SETTINGS
 
 
 class OptimizedServerSelector:
@@ -28,6 +28,7 @@ class OptimizedServerSelector:
         self.logger = logging.getLogger('sea_conquest_bot.server_selector')
         self.adb = adb_controller
         self.ocr_available = ocr_available
+        self.last_servers = []  # История последних найденных серверов для отслеживания движения
 
     def select_season(self, season_id: str) -> bool:
         """
@@ -96,6 +97,10 @@ class OptimizedServerSelector:
             import pytesseract
 
             screenshot = self.adb.screenshot()
+            if screenshot is None or screenshot.size == 0:
+                self.logger.warning("Получен пустой скриншот")
+                return {}
+
             x, y, w, h = OCR_REGIONS['servers']
             roi = screenshot[y:y + h, x:x + w]
 
@@ -122,10 +127,15 @@ class OptimizedServerSelector:
                     data, servers_with_coords, x, y, scale
                 )
 
-            sorted_servers = dict(sorted(servers_with_coords.items(), reverse=True))
+            # Фильтрация и валидация результатов
+            validated_servers = self._validate_servers(servers_with_coords)
+            sorted_servers = dict(sorted(validated_servers.items(), reverse=True))
 
             if sorted_servers:
-                self.logger.info(f"Найдены сервера: {list(sorted_servers.keys())}")
+                self.logger.info(f"Найдены валидные сервера: {list(sorted_servers.keys())}")
+                self.last_servers = list(sorted_servers.keys())
+            else:
+                self.logger.warning("Не найдено валидных серверов")
 
             return sorted_servers
 
@@ -133,43 +143,88 @@ class OptimizedServerSelector:
             self.logger.error(f"Ошибка получения координат серверов: {e}")
             return {}
 
+    def _validate_servers(self, servers_dict: Dict[int, Tuple[int, int]]) -> Dict[int, Tuple[int, int]]:
+        """
+        Валидация найденных серверов.
+
+        Args:
+            servers_dict: словарь серверов {server_id: (x, y)}
+
+        Returns:
+            dict: отфильтрованный словарь валидных серверов
+        """
+        validated = {}
+
+        for server_id, coords in servers_dict.items():
+            # Базовая проверка диапазона
+            if not (1 <= server_id <= 619):
+                self.logger.debug(f"Сервер {server_id} вне допустимого диапазона")
+                continue
+
+            # Проверка координат
+            x, y = coords
+            roi_x, roi_y, roi_w, roi_h = OCR_REGIONS['servers']
+            if not (roi_x <= x <= roi_x + roi_w and roi_y <= y <= roi_y + roi_h):
+                self.logger.debug(f"Сервер {server_id} имеет координаты вне области поиска")
+                continue
+
+            # Проверка на логичность последовательности (если есть история)
+            if self.last_servers:
+                # Проверяем, что новые сервера в разумном диапазоне от предыдущих
+                min_last = min(self.last_servers)
+                max_last = max(self.last_servers)
+
+                # Если сервер слишком далеко от предыдущих, возможно это ошибка OCR
+                if server_id < min_last - 50 or server_id > max_last + 50:
+                    self.logger.debug(f"Сервер {server_id} слишком далеко от предыдущих результатов")
+                    continue
+
+            validated[server_id] = coords
+
+        return validated
+
     def _preprocess_image(self, roi, w, h) -> List[Tuple[str, np.ndarray, int]]:
-        """Предобработка изображения для OCR."""
+        """Предобработка изображения для OCR с улучшенной фильтрацией."""
         gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
         processed = []
 
-        # Стандартная бинаризация
-        _, binary = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY_INV)
-        processed.append(("binary", binary, 1))
+        # Применение размытия для уменьшения шума
+        blurred = cv2.GaussianBlur(gray, (3, 3), 0)
+
+        # Стандартная бинаризация с предварительным размытием
+        _, binary = cv2.threshold(blurred, 150, 255, cv2.THRESH_BINARY_INV)
+        processed.append(("binary_blur", binary, 1))
 
         # Адаптивная бинаризация
         binary_adaptive = cv2.adaptiveThreshold(
-            gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
             cv2.THRESH_BINARY_INV, 11, 2
         )
-        processed.append(("adaptive", binary_adaptive, 1))
+        processed.append(("adaptive_blur", binary_adaptive, 1))
 
-        # Увеличенное изображение
+        # Увеличенное изображение для лучшего распознавания мелких символов
         scale_factor = 2
-        resized = cv2.resize(gray, (w * scale_factor, h * scale_factor),
+        resized = cv2.resize(blurred, (w * scale_factor, h * scale_factor),
                            interpolation=cv2.INTER_CUBIC)
         _, binary_resized = cv2.threshold(resized, 150, 255, cv2.THRESH_BINARY_INV)
-        processed.append(("resized", binary_resized, scale_factor))
+        processed.append(("resized_blur", binary_resized, scale_factor))
 
         return processed
 
     def _extract_servers_from_ocr_data(self, data, servers_dict, offset_x, offset_y, scale):
-        """Извлечение серверов из данных OCR."""
+        """Извлечение серверов из данных OCR с улучшенной фильтрацией."""
         for i in range(len(data['text'])):
             text = data['text'][i].strip()
             confidence = int(data['conf'][i])
 
-            if confidence < 30:
+            # Повышаем минимальную уверенность для лучшей фильтрации
+            if confidence < 40:
                 continue
 
             server_numbers = self._parse_server_numbers(text)
 
             for server_id in server_numbers:
+                # Дополнительная проверка на разумность номера сервера
                 if 100 <= server_id <= 619 and server_id not in servers_dict:
                     # Вычисляем координаты центра текста
                     text_x = data['left'][i] // scale
@@ -183,26 +238,35 @@ class OptimizedServerSelector:
                     servers_dict[server_id] = (abs_x, abs_y)
 
     def _parse_server_numbers(self, text: str) -> List[int]:
-        """Парсинг номеров серверов из текста."""
+        """Парсинг номеров серверов из текста с улучшенной логикой."""
+        # Очистка текста от лишних символов
+        clean_text = re.sub(r'[^\w\s#№:]', ' ', text)
+
         patterns = [
-            r"Море\s*#(\d{1,3})",
-            r"#(\d{1,3})",
-            r"\b(\d{3})\b",
-            r"\b(\d{1,3})\b"
+            r"Море\s*[#№]\s*(\d{3})",  # "Море #504"
+            r"[#№]\s*(\d{3})",          # "#504"
+            r"\b(\d{3})\b",             # Трехзначное число отдельно
         ]
 
         numbers = []
         for pattern in patterns:
-            matches = re.findall(pattern, text)
+            matches = re.findall(pattern, clean_text)
             for match in matches:
                 try:
                     num = int(match)
-                    if 1 <= num <= 619:
+                    # Более строгая проверка диапазона
+                    if 100 <= num <= 619:
                         numbers.append(num)
                 except ValueError:
                     continue
 
-        return numbers
+        # Убираем дубликаты, сохраняя порядок
+        unique_numbers = []
+        for num in numbers:
+            if num not in unique_numbers:
+                unique_numbers.append(num)
+
+        return unique_numbers
 
     def _save_debug_image(self, image, prefix):
         """Сохранение отладочного изображения."""
@@ -227,12 +291,82 @@ class OptimizedServerSelector:
         if server_id in servers_dict:
             return servers_dict[server_id]
 
-        # Поиск ближайшего сервера
+        # Поиск ближайшего сервера с более строгими критериями
         if servers_dict:
             closest_server = min(servers_dict.keys(),
                                key=lambda s: abs(s - server_id))
-            if abs(closest_server - server_id) <= 5:
+            # Уменьшаем допустимую разницу с 5 до 3 для большей точности
+            if abs(closest_server - server_id) <= 3:
                 self.logger.info(f"Используем близкий сервер {closest_server} вместо {server_id}")
                 return servers_dict[closest_server]
 
         return None
+
+    def scroll_to_server_range(self, target_server: int, current_servers: List[int]) -> bool:
+        """
+        Интеллектуальный скроллинг к диапазону сервера.
+
+        Args:
+            target_server: целевой сервер
+            current_servers: текущие видимые сервера
+
+        Returns:
+            bool: True если скроллинг выполнен, False если цель уже видна
+        """
+        if not current_servers:
+            self.logger.warning("Нет текущих серверов для определения направления скроллинга")
+            return True  # Выполняем скроллинг, если не знаем где мы
+
+        min_visible = min(current_servers)
+        max_visible = max(current_servers)
+
+        self.logger.info(f"Целевой сервер: {target_server}, видимые: {min_visible}-{max_visible}")
+
+        # Если целевой сервер уже видимый или близко к видимому
+        if min_visible <= target_server <= max_visible:
+            return False
+
+        # Если целевой сервер близко к видимому диапазону, используем мелкий скроллинг
+        if abs(target_server - min_visible) <= 5 or abs(target_server - max_visible) <= 5:
+            return self._perform_small_scroll(target_server, current_servers)
+
+        # Иначе выполняем обычный скроллинг
+        return self._perform_regular_scroll(target_server, current_servers)
+
+    def _perform_small_scroll(self, target_server: int, current_servers: List[int]) -> bool:
+        """Выполнение мелкого скроллинга."""
+        self.logger.info(f"Выполняем мелкий скроллинг к серверу {target_server}")
+
+        min_visible = min(current_servers)
+        scroll_down = target_server < min_visible
+
+        if scroll_down:
+            start_coords = COORDINATES['server_small_scroll_start']
+            end_coords = COORDINATES['server_small_scroll_end']
+        else:
+            start_coords = COORDINATES['server_small_scroll_end']
+            end_coords = COORDINATES['server_small_scroll_start']
+
+        self.adb.swipe(*start_coords, *end_coords,
+                      duration=SERVER_RECOGNITION_SETTINGS['small_scroll_duration'])
+        time.sleep(PAUSE_SETTINGS['after_server_scroll'])
+        return True
+
+    def _perform_regular_scroll(self, target_server: int, current_servers: List[int]) -> bool:
+        """Выполнение обычного скроллинга."""
+        min_visible = min(current_servers)
+        scroll_down = target_server < min_visible
+
+        self.logger.info(f"Выполняем {'вниз' if scroll_down else 'вверх'} скроллинг к серверу {target_server}")
+
+        if scroll_down:
+            start_coords = COORDINATES['server_scroll_start']
+            end_coords = COORDINATES['server_scroll_end']
+        else:
+            start_coords = COORDINATES['server_scroll_end']
+            end_coords = COORDINATES['server_scroll_start']
+
+        self.adb.swipe(*start_coords, *end_coords,
+                      duration=SERVER_RECOGNITION_SETTINGS['scroll_duration'])
+        time.sleep(PAUSE_SETTINGS['after_server_scroll'])
+        return True

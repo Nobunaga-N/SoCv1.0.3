@@ -6,7 +6,7 @@ import time
 import logging
 import cv2
 import numpy as np
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 
 from config import (
     IMAGE_PATHS, COORDINATES, SEASONS, DEFAULT_TIMEOUT, LOADING_TIMEOUT,
@@ -199,57 +199,191 @@ class OptimizedGameBot:
         return self._scroll_and_find_server(server_id)
 
     def _scroll_and_find_server(self, server_id: int) -> bool:
-        """Скроллинг и поиск сервера."""
-        self.logger.info(f"Скроллинг для поиска сервера {server_id}")
+        """Улучшенный скроллинг и поиск сервера с адаптивной логикой."""
+        self.logger.info(f"Интеллектуальный поиск сервера {server_id}")
 
-        # Определяем направление скроллинга
-        servers_dict = self.server_selector.get_servers_with_coordinates()
-        if servers_dict:
-            avg_server = sum(servers_dict.keys()) / len(servers_dict)
-            scroll_down = avg_server > server_id
-        else:
-            scroll_down = True
+        # Сначала получаем текущие видимые сервера
+        initial_servers = self.server_selector.get_servers_with_coordinates()
+        if not initial_servers:
+            self.logger.warning("Не удалось получить начальные сервера, выполняем стандартный поиск")
+            return self._fallback_scroll_search(server_id)
 
-        # Координаты скроллинга
-        if scroll_down:
-            start_coords = COORDINATES['server_scroll_start']
-            end_coords = COORDINATES['server_scroll_end']
-        else:
-            start_coords = COORDINATES['server_scroll_end']
-            end_coords = COORDINATES['server_scroll_start']
+        current_servers_list = list(initial_servers.keys())
 
-        # Выполняем скроллинг
+        # Проверяем, нужен ли скроллинг вообще
+        coords = self.server_selector.find_server_coordinates(server_id)
+        if coords:
+            self._click_server_at_coordinates(coords)
+            return True
+
+        # Выполняем адаптивный скроллинг
         max_attempts = SERVER_RECOGNITION_SETTINGS['max_scroll_attempts']
+
         for attempt in range(max_attempts):
             self.logger.info(f"Попытка скроллинга {attempt + 1}/{max_attempts}")
 
-            self.adb.swipe(*start_coords, *end_coords,
-                          duration=SERVER_RECOGNITION_SETTINGS['scroll_duration'])
-            time.sleep(PAUSE_SETTINGS['after_server_scroll'])
+            # Определяем, нужен ли скроллинг и какой именно
+            if not self.server_selector.scroll_to_server_range(server_id, current_servers_list):
+                # Если скроллинг не нужен, значит сервер должен быть видим
+                coords = self.server_selector.find_server_coordinates(server_id)
+                if coords:
+                    self._click_server_at_coordinates(coords)
+                    return True
+                continue
 
-            # Поиск после скроллинга
+            # Получаем новый список серверов после скроллинга
+            new_servers = self.server_selector.get_servers_with_coordinates()
+            if not new_servers:
+                self.logger.warning(f"Попытка {attempt + 1}: не удалось получить сервера после скроллинга")
+                continue
+
+            current_servers_list = list(new_servers.keys())
+
+            # Проверяем, нашли ли целевой сервер
             coords = self.server_selector.find_server_coordinates(server_id)
             if coords:
                 self._click_server_at_coordinates(coords)
                 return True
 
-            # Проверка перескроллинга
-            current_servers = self.server_selector.get_servers_with_coordinates()
-            if self._check_overshoot(current_servers, server_id, scroll_down):
+            # Проверяем, не застряли ли мы (сервера не изменились)
+            if self._is_scrolling_stuck(new_servers, initial_servers):
+                self.logger.warning("Скроллинг застрял, пробуем другую стратегию")
                 break
 
-        # Поиск ближайшего сервера
-        return self._try_nearest_server(server_id)
+            # Проверяем, не проскролили ли мы слишком далеко
+            if self._check_overshoot_improved(current_servers_list, server_id):
+                self.logger.info("Обнаружен перескроллинг, применяем точную корректировку")
+                if self._fine_tune_scroll(server_id, current_servers_list):
+                    coords = self.server_selector.find_server_coordinates(server_id)
+                    if coords:
+                        self._click_server_at_coordinates(coords)
+                        return True
 
-    def _check_overshoot(self, servers_dict: dict, target: int, scroll_down: bool) -> bool:
-        """Проверка перескроллинга."""
-        if not servers_dict:
+            initial_servers = new_servers
+
+        # Если все попытки исчерпаны, пробуем найти ближайший сервер
+        return self._try_nearest_server_improved(server_id, current_servers_list)
+
+    def _is_scrolling_stuck(self, new_servers: dict, old_servers: dict) -> bool:
+        """Проверка, застрял ли скроллинг (сервера не изменились)."""
+        if not new_servers or not old_servers:
             return False
 
-        if scroll_down and min(servers_dict.keys()) > target + 30:
+        new_set = set(new_servers.keys())
+        old_set = set(old_servers.keys())
+
+        # Если пересечение слишком большое, значит скроллинг почти не сработал
+        intersection = new_set & old_set
+        return len(intersection) > min(len(new_set), len(old_set)) * 0.7
+
+    def _check_overshoot_improved(self, current_servers: List[int], target_server: int) -> bool:
+        """Улучшенная проверка перескроллинга."""
+        if not current_servers:
+            return False
+
+        min_visible = min(current_servers)
+        max_visible = max(current_servers)
+
+        # Проверяем, проскролили ли мы слишком далеко в любую сторону
+        overshoot_threshold = SERVER_RECOGNITION_SETTINGS['overshoot_threshold']
+
+        if target_server > max_visible + overshoot_threshold:
+            self.logger.info(f"Перескроллинг вверх: цель {target_server}, видимые {min_visible}-{max_visible}")
             return True
-        elif not scroll_down and max(servers_dict.keys()) < target - 30:
+        elif target_server < min_visible - overshoot_threshold:
+            self.logger.info(f"Перескроллинг вниз: цель {target_server}, видимые {min_visible}-{max_visible}")
             return True
+
+        return False
+
+    def _fine_tune_scroll(self, target_server: int, current_servers: List[int]) -> bool:
+        """Точная корректировка скроллинга при обнаружении перескроллинга."""
+        self.logger.info("Выполняем точную корректировку скроллинга")
+
+        max_fine_attempts = 3
+        for attempt in range(max_fine_attempts):
+            # Определяем направление корректировки
+            min_visible = min(current_servers)
+            max_visible = max(current_servers)
+
+            if target_server > max_visible:
+                # Нужно скроллить вверх (показать большие номера)
+                direction = "up"
+            elif target_server < min_visible:
+                # Нужно скроллить вниз (показать меньшие номера)
+                direction = "down"
+            else:
+                # Цель уже в видимом диапазоне
+                return True
+
+            # Выполняем мелкий скроллинг в нужном направлении
+            if direction == "down":
+                start_coords = COORDINATES['server_small_scroll_start']
+                end_coords = COORDINATES['server_small_scroll_end']
+            else:
+                start_coords = COORDINATES['server_small_scroll_end']
+                end_coords = COORDINATES['server_small_scroll_start']
+
+            self.adb.swipe(*start_coords, *end_coords,
+                           duration=SERVER_RECOGNITION_SETTINGS['small_scroll_duration'])
+            time.sleep(PAUSE_SETTINGS['after_server_scroll'] * 0.5)  # Меньшая пауза для точной корректировки
+
+            # Проверяем результат
+            new_servers = self.server_selector.get_servers_with_coordinates()
+            if new_servers:
+                current_servers = list(new_servers.keys())
+                coords = self.server_selector.find_server_coordinates(target_server)
+                if coords:
+                    return True
+
+        return False
+
+    def _try_nearest_server_improved(self, server_id: int, current_servers: List[int]) -> bool:
+        """Улучшенная попытка выбрать ближайший сервер."""
+        if not current_servers:
+            self.logger.error("Нет доступных серверов для выбора ближайшего")
+            return False
+
+        closest = min(current_servers, key=lambda s: abs(s - server_id))
+        difference = abs(closest - server_id)
+
+        # Используем более строгий критерий для выбора ближайшего сервера
+        max_difference = SERVER_RECOGNITION_SETTINGS.get('max_server_difference', 5)
+
+        if difference <= max_difference:
+            self.logger.info(f"Выбираем ближайший доступный сервер {closest} (разница: {difference})")
+            servers_dict = self.server_selector.get_servers_with_coordinates()
+            if closest in servers_dict:
+                coords = servers_dict[closest]
+                self._click_server_at_coordinates(coords)
+                return True
+
+        self.logger.error(f"Ближайший сервер {closest} слишком далеко от целевого {server_id} (разница: {difference})")
+        return False
+
+    def _fallback_scroll_search(self, server_id: int) -> bool:
+        """Резервный метод поиска сервера при сбое основного алгоритма."""
+        self.logger.info("Применяем резервный метод поиска сервера")
+
+        # Выполняем несколько скроллингов в обоих направлениях
+        directions = [
+            ('down', COORDINATES['server_scroll_start'], COORDINATES['server_scroll_end']),
+            ('up', COORDINATES['server_scroll_end'], COORDINATES['server_scroll_start'])
+        ]
+
+        for direction_name, start_coords, end_coords in directions:
+            self.logger.info(f"Резервный поиск: скроллинг {direction_name}")
+
+            for _ in range(3):  # 3 попытки в каждом направлении
+                self.adb.swipe(*start_coords, *end_coords,
+                               duration=SERVER_RECOGNITION_SETTINGS['scroll_duration'])
+                time.sleep(PAUSE_SETTINGS['after_server_scroll'])
+
+                # Проверяем, появился ли нужный сервер
+                coords = self.server_selector.find_server_coordinates(server_id)
+                if coords:
+                    self._click_server_at_coordinates(coords)
+                    return True
 
         return False
 

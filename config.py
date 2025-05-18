@@ -56,8 +56,8 @@ COORDINATES = {
     'server_scroll_end': (640, 200),
 
     # НОВЫЕ координаты для мелкого скроллинга серверов
-    'server_small_scroll_start': (640, 400),
-    'server_small_scroll_end': (640, 300),
+    'server_small_scroll_start': (640, 380),
+    'server_small_scroll_end': (640, 320),
 
     # Координаты сезонов
     'seasons': {
@@ -135,28 +135,30 @@ FIND_SKIP_STEPS = [
 
 # Настройки для улучшенного распознавания серверов
 SERVER_RECOGNITION_SETTINGS = {
-    'max_scroll_attempts': 7,        # Увеличено с 5 до 7
+    'max_scroll_attempts': 8,        # Увеличено с 7 до 8
     'scroll_duration': 1000,         # Продолжительность обычного скроллинга в мс
-    'small_scroll_duration': 500,    # Продолжительность мелкого скроллинга в мс
+    'small_scroll_duration': 300,    # Уменьшено с 500 до 300 для более точного скроллинга
     'recognition_attempts': 3,       # Количество попыток распознавания OCR
     'servers_per_screen': 10,        # Примерное количество серверов на экране (5 пар)
-    'small_scroll_distance': 100,    # Расстояние для мелкого скроллинга в пикселях
-    'max_server_difference': 10,     # Максимальная приемлемая разница с целевым сервером
-    'overshoot_threshold': 30,       # Порог для определения перескроллинга
+    'small_scroll_distance': 50,     # Уменьшено с 100 до 50 пикселей
+    'max_server_difference': 5,      # Уменьшено с 10 до 5 для большей точности
+    'overshoot_threshold': 20,       # Уменьшено с 30 до 20 для более чувствительного определения
 }
 
 # УЛУЧШЕННЫЕ настройки для OCR с лучшей фильтрацией
 OCR_SETTINGS = {
     'language': 'rus+eng',
-    'config': '--psm 6',
+    'config': '--psm 6 -c tessedit_char_whitelist=0123456789#№Море ',  # Ограничиваем символы
     'threshold_binary': 150,
     'threshold_adaptive_block_size': 11,
     'threshold_adaptive_c': 2,
     'resize_factor': 2,              # Фактор увеличения изображения для лучшего распознавания
-    'min_server_number': 100,        # НОВОЕ: минимальный номер сервера для фильтрации
-    'max_server_number': 619,        # НОВОЕ: максимальный номер сервера для фильтрации
-    'max_difference_from_target': 100,  # НОВОЕ: максимальная разница от целевого сервера
+    'min_server_number': 100,        # Минимальный номер сервера для фильтрации
+    'max_server_number': 619,        # Максимальный номер сервера для фильтрации
+    'max_difference_from_target': 50,  # Уменьшено с 100 до 50
+    'min_confidence': 40,            # Минимальная уверенность OCR
 }
+
 
 # Дополнительные координаты для различных элементов интерфейса
 ADDITIONAL_COORDINATES = {
