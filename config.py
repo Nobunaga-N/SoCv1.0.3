@@ -135,13 +135,13 @@ FIND_SKIP_STEPS = [
 
 # Настройки для улучшенного распознавания серверов
 SERVER_RECOGNITION_SETTINGS = {
-    'max_scroll_attempts': 8,        # Увеличено с 7 до 8
+    'max_scroll_attempts': 10,       # Увеличено до 10 для лучшего поиска
     'scroll_duration': 1000,         # Продолжительность обычного скроллинга в мс
     'small_scroll_duration': 300,    # Уменьшено с 500 до 300 для более точного скроллинга
-    'recognition_attempts': 3,       # Количество попыток распознавания OCR
+    'recognition_attempts': 1,       # Уменьшено с 3 до 1 для ускорения
     'servers_per_screen': 10,        # Примерное количество серверов на экране (5 пар)
     'small_scroll_distance': 50,     # Уменьшено с 100 до 50 пикселей
-    'max_server_difference': 5,      # Уменьшено с 10 до 5 для большей точности
+    'max_server_difference': 3,      # Уменьшено с 10 до 3 для большей точности
     'overshoot_threshold': 20,       # Уменьшено с 30 до 20 для более чувствительного определения
 }
 

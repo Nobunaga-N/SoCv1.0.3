@@ -202,8 +202,8 @@ class OptimizedGameBot:
         """Оптимизированный скроллинг и поиск сервера."""
         self.logger.info(f"Поиск сервера {server_id}")
 
-        # Получаем текущие видимые сервера
-        current_servers = self.server_selector.get_servers_with_coordinates()
+        # Получаем текущие видимые сервера ОДИН раз
+        current_servers = self.server_selector.get_servers_with_coordinates(force_refresh=True)
         if not current_servers:
             self.logger.warning("Не удалось получить сервера, используем резервный метод")
             return self._fallback_scroll_search(server_id)
@@ -216,8 +216,8 @@ class OptimizedGameBot:
             self._click_server_at_coordinates(coords)
             return True
 
-        # Основной цикл скроллинга
-        max_attempts = 6  # Уменьшено с 10 до 6
+        # Основной цикл скроллинга - увеличено количество попыток
+        max_attempts = 10  # Увеличено до 10 для лучшего поиска
 
         for attempt in range(max_attempts):
             self.logger.info(f"Попытка скроллинга {attempt + 1}/{max_attempts}")
@@ -232,22 +232,18 @@ class OptimizedGameBot:
                     self._click_server_at_coordinates(coords)
                     return True
 
-            # Получаем новый список серверов после скроллинга
-            new_servers = self.server_selector.get_servers_with_coordinates()
+            # Получаем новый список серверов после скроллинга ОДИН раз с небольшой задержкой
+            time.sleep(0.5)  # Даем время на анимацию
+            new_servers = self.server_selector.get_servers_with_coordinates(force_refresh=True)
             if new_servers:
                 current_servers_list = list(new_servers.keys())
 
                 # Проверяем, нашли ли целевой сервер
-                coords = self.server_selector.find_server_coordinates(server_id)
-                if coords:
+                if server_id in new_servers:
                     self.logger.info(f"Найден сервер {server_id} после скроллинга!")
+                    coords = new_servers[server_id]
                     self._click_server_at_coordinates(coords)
                     return True
-
-            # Если нет прогресса несколько раз подряд, меняем стратегию
-            if attempt >= 3 and not self._check_scroll_progress(current_servers, new_servers):
-                self.logger.info("Меняем стратегию скроллинга")
-                self._perform_opposite_scroll(server_id, current_servers_list)
 
             current_servers = new_servers
 
@@ -292,26 +288,30 @@ class OptimizedGameBot:
         """Упрощенный финальный поиск сервера."""
         self.logger.info(f"Финальный поиск сервера {server_id}")
 
-        # Последняя попытка найти точный сервер
-        coords = self.server_selector.find_server_coordinates(server_id, attempts=2)
-        if coords:
-            self.logger.info(f"Найден сервер {server_id} в финальном поиске!")
-            self._click_server_at_coordinates(coords)
-            return True
-
-        # Ищем ближайший сервер
+        # Ищем ближайший сервер в пределах сезона
         if current_servers:
-            closest = min(current_servers, key=lambda s: abs(s - server_id))
-            difference = abs(closest - server_id)
+            # Определяем сезон для целевого сервера
+            target_season = self.determine_season_for_server(server_id)
+            if target_season and target_season in SEASONS:
+                season_data = SEASONS[target_season]
+                season_min = min(season_data['min_server'], season_data['max_server'])
+                season_max = max(season_data['min_server'], season_data['max_server'])
 
-            # Для финального поиска разрешаем большую разность
-            if difference <= 5:  # Уменьшено с 8 до 5
-                self.logger.info(f"Выбираем ближайший сервер {closest} (разница: {difference})")
-                final_servers = self.server_selector.get_servers_with_coordinates()
-                if closest in final_servers:
-                    coords = final_servers[closest]
-                    self._click_server_at_coordinates(coords)
-                    return True
+                # Фильтруем сервера по сезону
+                season_servers = [s for s in current_servers if season_min <= s <= season_max]
+
+                if season_servers:
+                    closest = min(season_servers, key=lambda s: abs(s - server_id))
+                    difference = abs(closest - server_id)
+
+                    # Используем найденный сервер если он достаточно близко
+                    if difference <= 3:  # Уменьшено с 5 до 3
+                        self.logger.info(f"Выбираем ближайший сервер {closest} (разница: {difference})")
+                        final_servers = self.server_selector.get_servers_with_coordinates()
+                        if closest in final_servers:
+                            coords = final_servers[closest]
+                            self._click_server_at_coordinates(coords)
+                            return True
 
         self.logger.error(f"Не удалось найти подходящий сервер для {server_id}")
         return False
@@ -440,14 +440,15 @@ class OptimizedGameBot:
         for direction_name, start_coords, end_coords in directions:
             self.logger.info(f"Резервный поиск: скроллинг {direction_name}")
 
-            for _ in range(3):  # 3 попытки в каждом направлении
+            for _ in range(3):  # Увеличено обратно до 3 попыток в каждом направлении
                 self.adb.swipe(*start_coords, *end_coords,
                                duration=SERVER_RECOGNITION_SETTINGS['scroll_duration'])
                 time.sleep(PAUSE_SETTINGS['after_server_scroll'])
 
                 # Проверяем, появился ли нужный сервер
-                coords = self.server_selector.find_server_coordinates(server_id)
-                if coords:
+                servers = self.server_selector.get_servers_with_coordinates(force_refresh=True)
+                if server_id in servers:
+                    coords = servers[server_id]
                     self._click_server_at_coordinates(coords)
                     return True
 

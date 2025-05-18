@@ -29,6 +29,10 @@ class OptimizedServerSelector:
         self.adb = adb_controller
         self.ocr_available = ocr_available
         self.last_servers = []  # История последних найденных серверов для отслеживания движения
+        self.current_season = None  # Текущий выбранный сезон
+        self.cached_servers = {}  # Кеш для результатов OCR
+        self.last_screenshot_time = 0  # Время последнего скриншота
+        self.cache_timeout = 1.0  # Таймаут кеша в секундах
 
     def select_season(self, season_id: str) -> bool:
         """
@@ -45,6 +49,10 @@ class OptimizedServerSelector:
         if season_id not in SEASONS:
             self.logger.error(f"Неизвестный сезон: {season_id}")
             return False
+
+        # Сохраняем текущий сезон для валидации
+        self.current_season = season_id
+        self.cached_servers = {}  # Очищаем кеш при смене сезона
 
         # Проверяем, нужен ли скроллинг для нижних сезонов
         if season_id in ['X2', 'X3', 'X4']:
@@ -79,16 +87,25 @@ class OptimizedServerSelector:
 
         return True
 
-    def get_servers_with_coordinates(self, debug_save=False) -> Dict[int, Tuple[int, int]]:
+    def get_servers_with_coordinates(self, debug_save=False, force_refresh=False) -> Dict[int, Tuple[int, int]]:
         """
         Получение видимых серверов с точными координатами через OCR.
+        Добавлено кеширование для уменьшения количества вызовов OCR.
 
         Args:
             debug_save: сохранять ли отладочные изображения
+            force_refresh: принудительно обновить кеш
 
         Returns:
             dict: словарь {server_id: (click_x, click_y)}
         """
+        current_time = time.time()
+
+        # Проверяем кеш
+        if not force_refresh and current_time - self.last_screenshot_time < self.cache_timeout:
+            if self.cached_servers:
+                return self.cached_servers
+
         if not self.ocr_available:
             self.logger.warning("OCR не доступен")
             return {}
@@ -127,13 +144,19 @@ class OptimizedServerSelector:
                     data, servers_with_coords, x, y, scale
                 )
 
-            # Фильтрация и валидация результатов
-            validated_servers = self._validate_servers(servers_with_coords)
+            # Фильтрация и валидация результатов с учетом текущего сезона
+            validated_servers = self._validate_servers_with_season(servers_with_coords)
             sorted_servers = dict(sorted(validated_servers.items(), reverse=True))
 
+            # Обновляем кеш и время
+            self.cached_servers = sorted_servers
+            self.last_screenshot_time = current_time
+
             if sorted_servers:
-                self.logger.info(f"Найдены валидные сервера: {list(sorted_servers.keys())}")
-                self.last_servers = list(sorted_servers.keys())
+                # Логируем только если результат отличается от предыдущего
+                if list(sorted_servers.keys()) != self.last_servers:
+                    self.logger.info(f"Найдены валидные сервера: {list(sorted_servers.keys())}")
+                    self.last_servers = list(sorted_servers.keys())
             else:
                 self.logger.warning("Не найдено валидных серверов")
 
@@ -143,9 +166,9 @@ class OptimizedServerSelector:
             self.logger.error(f"Ошибка получения координат серверов: {e}")
             return {}
 
-    def _validate_servers(self, servers_dict: Dict[int, Tuple[int, int]]) -> Dict[int, Tuple[int, int]]:
+    def _validate_servers_with_season(self, servers_dict: Dict[int, Tuple[int, int]]) -> Dict[int, Tuple[int, int]]:
         """
-        Валидация найденных серверов с улучшенной логикой.
+        Валидация найденных серверов с учетом текущего сезона.
 
         Args:
             servers_dict: словарь серверов {server_id: (x, y)}
@@ -155,10 +178,25 @@ class OptimizedServerSelector:
         """
         validated = {}
 
+        # Получаем диапазон серверов для текущего сезона
+        if self.current_season and self.current_season in SEASONS:
+            season_data = SEASONS[self.current_season]
+            season_min = min(season_data['min_server'], season_data['max_server'])
+            season_max = max(season_data['min_server'], season_data['max_server'])
+        else:
+            # Если сезон не установлен, используем полный диапазон
+            season_min = 1
+            season_max = 619
+
         for server_id, coords in servers_dict.items():
             # Базовая проверка диапазона
             if not (1 <= server_id <= 619):
-                self.logger.debug(f"Сервер {server_id} вне допустимого диапазона")
+                self.logger.debug(f"Сервер {server_id} вне общего диапазона")
+                continue
+
+            # Проверка принадлежности к текущему сезону
+            if not (season_min <= server_id <= season_max):
+                self.logger.debug(f"Сервер {server_id} не принадлежит сезону {self.current_season} ({season_min}-{season_max})")
                 continue
 
             # Проверка координат
@@ -168,27 +206,22 @@ class OptimizedServerSelector:
                 self.logger.debug(f"Сервер {server_id} имеет координаты вне области поиска")
                 continue
 
-            # Более мягкая проверка на логичность последовательности
+            # Проверка логичности последовательности (более мягкая для серверов в пределах сезона)
             if self.last_servers:
                 min_last = min(self.last_servers)
                 max_last = max(self.last_servers)
 
-                # Увеличиваем допустимый диапазон с 50 до 100
-                if server_id < min_last - 100 or server_id > max_last + 100:
-                    self.logger.debug(f"Сервер {server_id} слишком далеко от предыдущих результатов")
+                # Для серверов в пределах сезона используем более мягкий критерий
+                reasonable_range = 50
+                if server_id < min_last - reasonable_range or server_id > max_last + reasonable_range:
+                    self.logger.debug(f"Сервер {server_id} далеко от предыдущих результатов ({min_last}-{max_last})")
                     continue
 
             validated[server_id] = coords
 
-        # Если валидных серверов слишком мало, добавляем больше кандидатов
-        if len(validated) < 5 and len(servers_dict) > len(validated):
-            self.logger.info("Мало валидных серверов, добавляем с мягкими критериями")
-            # Добавляем сервера которые прошли только базовые проверки
-            for server_id, coords in servers_dict.items():
-                if server_id not in validated and 100 <= server_id <= 619:
-                    validated[server_id] = coords
-                    if len(validated) >= 10:  # Ограничиваем общее количество
-                        break
+        # Если найдено мало валидных серверов, логируем для отладки
+        if len(validated) < 3:
+            self.logger.debug(f"Мало валидных серверов ({len(validated)}), сезон: {self.current_season}")
 
         return validated
 
@@ -285,34 +318,28 @@ class OptimizedServerSelector:
         timestamp = int(time.time())
         cv2.imwrite(f"{debug_dir}/{prefix}_{timestamp}.png", image)
 
-    def find_server_coordinates(self, server_id: int, attempts: int = 3) -> Optional[Tuple[int, int]]:
+    def find_server_coordinates(self, server_id: int, attempts: int = 1) -> Optional[Tuple[int, int]]:
         """
-        Поиск координат конкретного сервера с несколькими попытками.
+        Поиск координат конкретного сервера с уменьшенным количеством попыток.
 
         Args:
             server_id: номер сервера
-            attempts: количество попыток поиска
+            attempts: количество попыток поиска (уменьшено с 3 до 1)
 
         Returns:
             tuple: (x, y) координаты сервера или None
         """
         for attempt in range(attempts):
-            servers_dict = self.get_servers_with_coordinates(debug_save=(attempt == 0))
+            # Принудительно обновляем данные только на первой попытке
+            servers_dict = self.get_servers_with_coordinates(
+                debug_save=(attempt == 0),
+                force_refresh=(attempt == 0)
+            )
 
             # Прямой поиск целевого сервера
             if server_id in servers_dict:
                 self.logger.info(f"Сервер {server_id} найден точно на попытке {attempt + 1}")
                 return servers_dict[server_id]
-
-            # Поиск ближайшего сервера (только на последней попытке)
-            if attempt == attempts - 1 and servers_dict:
-                closest_server = min(servers_dict.keys(),
-                                   key=lambda s: abs(s - server_id))
-
-                difference = abs(closest_server - server_id)
-                if difference <= 1:  # Только если очень близко
-                    self.logger.info(f"Используем очень близкий сервер {closest_server} вместо {server_id}")
-                    return servers_dict[closest_server]
 
             # Небольшая пауза между попытками
             if attempt < attempts - 1:
@@ -340,7 +367,7 @@ class OptimizedServerSelector:
         min_visible = min(current_servers)
         max_visible = max(current_servers)
 
-        self.logger.info(f"Целевой сервер: {target_server}, видимые: {min_visible}-{max_visible}")
+        self.logger.debug(f"Целевой сервер: {target_server}, видимые: {min_visible}-{max_visible}")
 
         # Если целевой сервер уже видимый
         if min_visible <= target_server <= max_visible:
@@ -366,7 +393,7 @@ class OptimizedServerSelector:
 
     def _perform_small_scroll(self, target_server: int, current_servers: List[int]) -> bool:
         """Выполнение мелкого скроллинга с улучшенной точностью."""
-        self.logger.info(f"Выполняем мелкий скроллинг к серверу {target_server}")
+        self.logger.debug(f"Выполняем мелкий скроллинг к серверу {target_server}")
 
         if not current_servers:
             # Если нет данных о текущих серверах, делаем скроллинг вниз
@@ -396,14 +423,17 @@ class OptimizedServerSelector:
         small_duration = SERVER_RECOGNITION_SETTINGS['small_scroll_duration'] // 2  # Половина обычного времени
         self.adb.swipe(*start_coords, *end_coords, duration=small_duration)
         time.sleep(PAUSE_SETTINGS['after_server_scroll'])
+
+        # Очищаем кеш после скроллинга
+        self.cached_servers = {}
         return True
 
     def _perform_regular_scroll(self, target_server: int, current_servers: List[int]) -> bool:
         """Выполнение обычного скроллинга."""
-        min_visible = min(current_servers)
+        min_visible = min(current_servers) if current_servers else 500
         scroll_down = target_server < min_visible
 
-        self.logger.info(f"Выполняем {'вниз' if scroll_down else 'вверх'} скроллинг к серверу {target_server}")
+        self.logger.debug(f"Выполняем {'вниз' if scroll_down else 'вверх'} скроллинг к серверу {target_server}")
 
         if scroll_down:
             start_coords = COORDINATES['server_scroll_start']
@@ -415,4 +445,7 @@ class OptimizedServerSelector:
         self.adb.swipe(*start_coords, *end_coords,
                       duration=SERVER_RECOGNITION_SETTINGS['scroll_duration'])
         time.sleep(PAUSE_SETTINGS['after_server_scroll'])
+
+        # Очищаем кеш после скроллинга
+        self.cached_servers = {}
         return True
