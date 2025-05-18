@@ -491,7 +491,7 @@ class GameBot:
 
     def select_server(self, server_id):
         """
-        Улучшенный метод выбора сервера с использованием настроек из конфига.
+        ИСПРАВЛЕННЫЙ метод выбора сервера с улучшенной логикой.
 
         Args:
             server_id: номер сервера
@@ -516,89 +516,266 @@ class GameBot:
 
         # Получение списка видимых серверов
         visible_servers = self.get_visible_servers()
+        self.logger.info(f"Видимые сервера: {visible_servers}")
 
-        # Проверяем, виден ли целевой сервер
+        # НОВАЯ ЛОГИКА: Проверяем ближайший сервер ДО скроллинга
         if server_id in visible_servers:
-            self.logger.info(f"Сервер {server_id} уже виден на экране")
-            server_pos = self.get_server_coordinates_improved(server_id, visible_servers, server_coords)
-            if server_pos:
-                # Пауза перед кликом из конфига
-                time.sleep(PAUSE_SETTINGS['before_server_click'])
-                self.logger.info(f"Пауза {PAUSE_SETTINGS['before_server_click']} секунд перед кликом по серверу")
-
-                self.click_coord(server_pos[0], server_pos[1])
-
-                # Пауза после клика из конфига
-                time.sleep(PAUSE_SETTINGS['after_server_click'])
-                self.logger.info(f"Пауза {PAUSE_SETTINGS['after_server_click']} секунд после выбора сервера")
-                return True
+            # Целевой сервер виден
+            self.logger.info(f"Целевой сервер {server_id} уже виден на экране")
+            return self._click_server(server_id, visible_servers, server_coords)
         else:
-            # Скроллинг до нужного сервера
-            self.logger.info(f"Сервер {server_id} не виден, выполняем скроллинг")
+            # Целевой сервер не виден, но проверим ближайший
+            nearest_server = self.find_nearest_server_before_scroll(server_id, visible_servers)
+            if nearest_server:
+                self.logger.info(f"Целевой сервер {server_id} не виден, но найден близкий сервер {nearest_server}")
+                return self._click_server(nearest_server, visible_servers, server_coords)
 
-            # Используем координаты скроллинга серверов из конфига
-            scroll_start_x, scroll_start_y = COORDINATES['server_scroll_start']
-            scroll_end_x, scroll_end_y = COORDINATES['server_scroll_end']
+        # Если близкого сервера нет, начинаем скроллинг
+        return self._scroll_and_find_server(server_id, visible_servers, server_coords)
 
-            # Максимальное количество попыток из конфига
-            max_attempts = SERVER_RECOGNITION_SETTINGS['max_scroll_attempts']
+    def find_nearest_server_before_scroll(self, target_server, visible_servers):
+        """
+        ИСПРАВЛЕННЫЙ поиск ближайшего сервера перед началом скроллинга.
 
-            for attempt in range(max_attempts):
-                self.logger.info(f"Попытка скроллинга серверов {attempt + 1}/{max_attempts}")
+        Args:
+            target_server: целевой сервер
+            visible_servers: список видимых серверов
 
-                # Выполняем скроллинг с настройками из конфига
-                self.swipe(scroll_start_x, scroll_start_y, scroll_end_x, scroll_end_y,
-                           duration=SERVER_RECOGNITION_SETTINGS['scroll_duration'])
+        Returns:
+            int: номер ближайшего сервера или None, если разница более 5
+        """
+        if not visible_servers:
+            return None
 
-                # Пауза после скроллинга из конфига
-                time.sleep(PAUSE_SETTINGS['after_server_scroll'])
-                self.logger.info(f"Пауза {PAUSE_SETTINGS['after_server_scroll']} секунд после скроллинга серверов")
+        # Фильтруем валидные сервера (убираем явные ошибки OCR)
+        valid_servers = [s for s in visible_servers if s >= 100 and abs(s - target_server) <= 50]
 
-                # Получаем обновленный список видимых серверов
-                visible_servers = self.get_visible_servers()
+        if not valid_servers:
+            return None
 
-                # Проверяем, найден ли нужный сервер
-                if server_id in visible_servers:
-                    self.logger.info(f"Сервер {server_id} найден после скроллинга")
-                    server_pos = self.get_server_coordinates_improved(server_id, visible_servers, server_coords)
-                    if server_pos:
-                        # Паузы из конфига
-                        time.sleep(PAUSE_SETTINGS['before_server_click'])
-                        self.logger.info(f"Пауза {PAUSE_SETTINGS['before_server_click']} секунд перед кликом")
+        # Ищем ближайший сервер с разницей не более 5
+        closest_server = None
+        min_difference = float('inf')
 
-                        self.click_coord(server_pos[0], server_pos[1])
+        for server in valid_servers:
+            difference = abs(server - target_server)
+            if difference < min_difference and difference <= 5:  # Максимальная разница 5
+                min_difference = difference
+                closest_server = server
 
-                        time.sleep(PAUSE_SETTINGS['after_server_click'])
-                        self.logger.info(f"Пауза {PAUSE_SETTINGS['after_server_click']} секунд после выбора")
-                        return True
+        if closest_server:
+            self.logger.info(f"Найден близкий сервер {closest_server} (разница: {min_difference})")
 
-                # Проверяем, не проскролили ли слишком далеко
-                if visible_servers and min(visible_servers) < server_id:
-                    self.logger.warning("Проскролили слишком далеко, ищем ближайший сервер")
-                    break
+        return closest_server
 
-            # Если точный сервер не найден, ищем ближайший доступный
-            available_server = self.find_next_available_server(server_id, visible_servers)
-            if available_server:
-                self.logger.info(f"Выбираем ближайший доступный сервер {available_server}")
-                server_pos = self.get_server_coordinates_improved(available_server, visible_servers, server_coords)
-                if server_pos:
-                    # Паузы из конфига
-                    time.sleep(PAUSE_SETTINGS['before_server_click'])
-                    self.logger.info(f"Пауза {PAUSE_SETTINGS['before_server_click']} секунд перед кликом")
+    def _scroll_and_find_server(self, server_id, initial_visible_servers, server_coords):
+        """
+        ИСПРАВЛЕННЫЙ скроллинг с поиском сервера с улучшенной логикой.
+        """
+        self.logger.info(f"Начинаем скроллинг для поиска сервера {server_id}")
 
-                    self.click_coord(server_pos[0], server_pos[1])
+        # Определяем направление скроллинга
+        if initial_visible_servers:
+            avg_visible = sum(initial_visible_servers) / len(initial_visible_servers)
+            scroll_down = avg_visible > server_id
+        else:
+            scroll_down = True  # По умолчанию скроллим вниз
 
-                    time.sleep(PAUSE_SETTINGS['after_server_click'])
-                    self.logger.info(f"Пауза {PAUSE_SETTINGS['after_server_click']} секунд после выбора")
-                    return True
+        scroll_direction = "вниз" if scroll_down else "вверх"
+        self.logger.info(f"Направление скроллинга: {scroll_direction}")
 
-        self.logger.error(f"Не удалось выбрать сервер {server_id}")
+        # Координаты скроллинга
+        if scroll_down:
+            start_x, start_y = COORDINATES['server_scroll_start']
+            end_x, end_y = COORDINATES['server_scroll_end']
+        else:
+            start_x, start_y = COORDINATES['server_scroll_end']
+            end_x, end_y = COORDINATES['server_scroll_start']
+
+        # УВЕЛИЧЕНО максимальное количество попыток скроллинга
+        max_attempts = SERVER_RECOGNITION_SETTINGS['max_scroll_attempts'] * 2  # Было 5, стало 10
+        previous_servers = set(initial_visible_servers)
+
+        best_server_found = None  # Лучший найденный сервер
+        min_difference = float('inf')  # Минимальная разница с целевым сервером
+
+        for attempt in range(max_attempts):
+            self.logger.info(f"Попытка скроллинга {attempt + 1}/{max_attempts}")
+
+            # Выполняем скроллинг
+            self.swipe(start_x, start_y, end_x, end_y,
+                       duration=SERVER_RECOGNITION_SETTINGS['scroll_duration'])
+
+            # Пауза после скроллинга
+            time.sleep(PAUSE_SETTINGS['after_server_scroll'])
+
+            # Получаем обновленный список видимых серверов
+            visible_servers = self.get_visible_servers()
+            self.logger.info(f"После скроллинга видимые сервера: {visible_servers}")
+
+            # Проверяем, найден ли целевой сервер
+            if server_id in visible_servers:
+                self.logger.info(f"НАЙДЕН целевой сервер {server_id} после скроллинга")
+                return self._click_server(server_id, visible_servers, server_coords)
+
+            # Ищем лучший сервер среди видимых
+            if visible_servers:
+                current_best = self._find_closest_server(server_id, visible_servers)
+                if current_best:
+                    difference = abs(current_best - server_id)
+                    if difference < min_difference:
+                        min_difference = difference
+                        best_server_found = current_best
+                        self.logger.info(f"Новый лучший сервер: {best_server_found} (разница: {difference})")
+
+            # ИСПРАВЛЕННАЯ проверка на перескроллинг - более строгая логика
+            if visible_servers:
+                server_range = max(visible_servers) - min(visible_servers)
+                if scroll_down:
+                    # Если скроллим вниз и максимальный сервер слишком далеко от цели
+                    if max(visible_servers) < server_id - 30:  # Увеличен порог с 10 до 30
+                        self.logger.warning(
+                            f"Проскролили слишком далеко вниз (макс: {max(visible_servers)}, цель: {server_id})")
+                        break
+                else:
+                    # Если скроллим вверх и минимальный сервер слишком далеко от цели
+                    if min(visible_servers) > server_id + 30:  # Увеличен порог с 10 до 30
+                        self.logger.warning(
+                            f"Проскролили слишком далеко вверх (мин: {min(visible_servers)}, цель: {server_id})")
+                        break
+
+            # ИСПРАВЛЕННАЯ проверка на отсутствие изменений в списке серверов
+            current_servers = set(visible_servers)
+            if current_servers == previous_servers and visible_servers:
+                self.logger.warning("Список серверов не изменился, возможно достигнут предел скроллинга")
+
+                # Если у нас есть хороший сервер (разница <= 5), используем его
+                if best_server_found and min_difference <= 5:
+                    self.logger.info(
+                        f"Используем лучший найденный сервер {best_server_found} (разница: {min_difference})")
+                    return self._click_server(best_server_found, visible_servers, server_coords)
+
+                break
+
+            previous_servers = current_servers
+
+        # После завершения скроллинга
+        self.logger.info(
+            f"Скроллинг завершен. Лучший найденный сервер: {best_server_found} (разница: {min_difference})")
+
+        # Если есть хороший сервер (разница <= 10), используем его
+        if best_server_found and min_difference <= 10:
+            final_visible_servers = self.get_visible_servers()
+            if best_server_found in final_visible_servers:
+                self.logger.info(f"Выбираем лучший сервер {best_server_found}")
+                return self._click_server(best_server_found, final_visible_servers, server_coords)
+            else:
+                # Если лучший сервер ушел с экрана, попробуем точную корректировку
+                self.logger.info("Лучший сервер ушел с экрана, пробуем точную корректировку")
+                return self._fine_tune_scroll(server_id, final_visible_servers, server_coords,
+                                              direction="up" if scroll_down else "down")
+
+        # Если не нашли хороший сервер, пробуем точную корректировку
+        final_visible_servers = self.get_visible_servers()
+        return self._fine_tune_scroll(server_id, final_visible_servers, server_coords,
+                                      direction="up" if scroll_down else "down")
+
+    def _find_closest_server(self, target_server, visible_servers):
+        """
+        Найти ближайший сервер к целевому среди видимых.
+
+        Args:
+            target_server: целевой сервер
+            visible_servers: список видимых серверов
+
+        Returns:
+            int: ближайший сервер или None
+        """
+        if not visible_servers:
+            return None
+
+        closest_server = None
+        min_difference = float('inf')
+
+        for server in visible_servers:
+            difference = abs(server - target_server)
+            if difference < min_difference:
+                min_difference = difference
+                closest_server = server
+
+        return closest_server
+
+    def _fine_tune_scroll(self, server_id, visible_servers, server_coords, direction="up"):
+        """
+        Мелкий скроллинг для точной корректировки позиции.
+        """
+        self.logger.info(f"Начинаем точную корректировку скроллинга в направлении: {direction}")
+
+        # Координаты для мелкого скроллинга
+        if direction == "up":
+            start_x, start_y = COORDINATES['server_small_scroll_end']
+            end_x, end_y = COORDINATES['server_small_scroll_start']
+        else:
+            start_x, start_y = COORDINATES['server_small_scroll_start']
+            end_x, end_y = COORDINATES['server_small_scroll_end']
+
+        max_fine_attempts = 3
+
+        for attempt in range(max_fine_attempts):
+            self.logger.info(f"Попытка точной корректировки {attempt + 1}/{max_fine_attempts}")
+
+            # Мелкий скроллинг
+            self.swipe(start_x, start_y, end_x, end_y,
+                       duration=SERVER_RECOGNITION_SETTINGS['small_scroll_duration'])
+
+            # Короткая пауза
+            time.sleep(1.0)
+
+            # Проверяем результат
+            visible_servers = self.get_visible_servers()
+            self.logger.info(f"После корректировки видимые сервера: {visible_servers}")
+
+            # Проверяем целевой сервер
+            if server_id in visible_servers:
+                self.logger.info(f"Целевой сервер {server_id} найден после корректировки")
+                return self._click_server(server_id, visible_servers, server_coords)
+
+            # Проверяем близкий сервер
+            nearest_server = self.find_nearest_server_before_scroll(server_id, visible_servers)
+            if nearest_server:
+                self.logger.info(f"Найден близкий сервер {nearest_server} после корректировки")
+                return self._click_server(nearest_server, visible_servers, server_coords)
+
+        # Если точная корректировка не помогла, выбираем лучший доступный
+        available_server = self.find_next_available_server(server_id, visible_servers)
+        if available_server:
+            self.logger.info(f"После корректировки выбираем лучший доступный сервер {available_server}")
+            return self._click_server(available_server, visible_servers, server_coords)
+
+        return False
+
+    def _click_server(self, server_id, visible_servers, server_coords):
+        """
+        Вспомогательный метод для клика по серверу.
+        """
+        server_pos = self.get_server_coordinates_improved(server_id, visible_servers, server_coords)
+        if server_pos:
+            # Паузы из конфига
+            time.sleep(PAUSE_SETTINGS['before_server_click'])
+            self.logger.info(f"Пауза {PAUSE_SETTINGS['before_server_click']} секунд перед кликом")
+
+            self.click_coord(server_pos[0], server_pos[1])
+
+            time.sleep(PAUSE_SETTINGS['after_server_click'])
+            self.logger.info(f"Пауза {PAUSE_SETTINGS['after_server_click']} секунд после выбора")
+            return True
+
+        self.logger.error(f"Не удалось получить координаты для сервера {server_id}")
         return False
 
     def get_visible_servers(self):
         """
-        Получение списка видимых серверов с использованием настроек OCR из конфига.
+        УЛУЧШЕННЫЙ метод получения списка видимых серверов с расширенной областью OCR.
 
         Returns:
             list: список видимых серверов (номеров)
@@ -615,16 +792,18 @@ class GameBot:
             # Получение скриншота
             screenshot = self.adb.screenshot()
 
-            # Используем область для серверов из конфига
+            # Используем РАСШИРЕННУЮ область для серверов из конфига
             x, y, w, h = OCR_REGIONS['servers']
             roi = screenshot[y:y + h, x:x + w]
+
+            self.logger.debug(f"Область OCR для серверов: x={x}, y={y}, w={w}, h={h}")
 
             # Улучшенная предобработка с настройками из конфига
             gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
 
             results = []
 
-            # Метод 1: Стандартная бинаризация с настройками из конфига
+            # Метод 1: Стандартная бинаризация
             _, binary = cv2.threshold(gray, OCR_SETTINGS['threshold_binary'],
                                       255, cv2.THRESH_BINARY_INV)
             text1 = pytesseract.image_to_string(binary,
@@ -632,7 +811,7 @@ class GameBot:
                                                 config=OCR_SETTINGS['config'])
             results.append(text1)
 
-            # Метод 2: Адаптивная бинаризация с настройками из конфига
+            # Метод 2: Адаптивная бинаризация
             binary_adaptive = cv2.adaptiveThreshold(
                 gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
                 cv2.THRESH_BINARY_INV,
@@ -644,7 +823,7 @@ class GameBot:
                                                 config=OCR_SETTINGS['config'])
             results.append(text2)
 
-            # Метод 3: С увеличением изображения (настройки из конфига)
+            # Метод 3: С увеличением изображения
             resize_factor = OCR_SETTINGS['resize_factor']
             resized_roi = cv2.resize(roi, (w * resize_factor, h * resize_factor),
                                      interpolation=cv2.INTER_CUBIC)
@@ -656,15 +835,25 @@ class GameBot:
                                                 config=OCR_SETTINGS['config'])
             results.append(text3)
 
+            # Метод 4: Инвертированная бинаризация (для светлого текста на темном фоне)
+            _, binary_inv = cv2.threshold(gray, OCR_SETTINGS['threshold_binary'],
+                                          255, cv2.THRESH_BINARY)
+            text4 = pytesseract.image_to_string(binary_inv,
+                                                lang=OCR_SETTINGS['language'],
+                                                config=OCR_SETTINGS['config'])
+            results.append(text4)
+
             # Объединяем все результаты
             combined_text = ' '.join(results)
+            self.logger.debug(f"Объединенный текст OCR: {combined_text}")
 
-            # Поиск номеров серверов
+            # Поиск номеров серверов с улучшенными паттернами
             import re
             patterns = [
                 r"Море\s*#(\d{1,3})",  # "Море #XXX"
                 r"#(\d{1,3})",  # "#XXX"
-                r"(\d{3})"  # Просто три цифры
+                r"(\d{3})",  # Просто три цифры
+                r"(\d{1,3})"  # Любые цифры от 1 до 3 знаков
             ]
 
             servers_found = set()
@@ -684,6 +873,7 @@ class GameBot:
                 self.logger.info(f"Распознанные сервера на экране: {visible_servers}")
             else:
                 self.logger.warning("Не удалось распознать сервера с помощью OCR")
+                self.logger.debug(f"Полный текст для отладки: {combined_text}")
 
         except Exception as e:
             self.logger.error(f"Ошибка при распознавании серверов: {e}")
@@ -693,7 +883,7 @@ class GameBot:
 
     def find_next_available_server(self, target_server, visible_servers):
         """
-        Поиск следующего доступного сервера, если целевой недоступен.
+        ИСПРАВЛЕННЫЙ поиск следующего доступного сервера.
 
         Args:
             target_server: целевой номер сервера
@@ -706,21 +896,40 @@ class GameBot:
             self.logger.warning("Список видимых серверов пуст")
             return None
 
-        # Сортируем видимые сервера по убыванию
-        visible_servers = sorted(visible_servers, reverse=True)
-
-        # Ищем ближайший доступный сервер (с меньшим номером)
+        # Фильтруем только валидные сервера (убираем явно неправильные как 5, 9, 88 и т.д.)
+        valid_servers = []
         for server in visible_servers:
-            if server < target_server:
-                self.logger.info(f"Найден ближайший доступный сервер {server} (меньше целевого {target_server})")
-                return server
+            # Проверяем, что сервер находится в разумном диапазоне около целевого
+            if abs(server - target_server) <= 100 and server >= 100:  # Сервера меньше 100 скорее всего ошибка OCR
+                valid_servers.append(server)
 
-        # Если не нашли сервер с меньшим номером, берем наибольший доступный
-        if visible_servers:
-            self.logger.info(f"Выбираем наибольший доступный сервер {visible_servers[0]}")
-            return visible_servers[0]
+        if not valid_servers:
+            self.logger.warning(f"Нет валидных серверов рядом с {target_server}. Видимые сервера: {visible_servers}")
+            # Если нет валидных, попробуем взять сервера больше 100
+            valid_servers = [s for s in visible_servers if s >= 100]
+            if not valid_servers:
+                return None
 
-        return None
+        # Сортируем валидные сервера
+        valid_servers.sort()
+
+        # Ищем ближайший сервер
+        closest_server = None
+        min_difference = float('inf')
+
+        for server in valid_servers:
+            difference = abs(server - target_server)
+            if difference < min_difference:
+                min_difference = difference
+                closest_server = server
+
+        if closest_server:
+            self.logger.info(
+                f"Найден ближайший валидный сервер {closest_server} для цели {target_server} (разница: {min_difference})")
+        else:
+            self.logger.warning(f"Не найден подходящий сервер для {target_server} среди {visible_servers}")
+
+        return closest_server
 
     def get_server_coordinates_improved(self, server_id, visible_servers, server_coords):
         """
