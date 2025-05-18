@@ -87,13 +87,12 @@ class OptimizedServerSelector:
 
         return True
 
-    def get_servers_with_coordinates(self, debug_save=False, force_refresh=False) -> Dict[int, Tuple[int, int]]:
+    def get_servers_with_coordinates(self, force_refresh=False) -> Dict[int, Tuple[int, int]]:
         """
         Получение видимых серверов с точными координатами через OCR.
         Добавлено кеширование для уменьшения количества вызовов OCR.
 
         Args:
-            debug_save: сохранять ли отладочные изображения
             force_refresh: принудительно обновить кеш
 
         Returns:
@@ -121,17 +120,11 @@ class OptimizedServerSelector:
             x, y, w, h = OCR_REGIONS['servers']
             roi = screenshot[y:y + h, x:x + w]
 
-            # Отладочное сохранение
-            if debug_save:
-                self._save_debug_image(roi, "server_roi")
-
             # Обработка изображения
             servers_with_coords = {}
             processed_images = self._preprocess_image(roi, w, h)
 
             for method_name, img, scale in processed_images:
-                if debug_save:
-                    self._save_debug_image(img, f"processed_{method_name}")
 
                 # OCR анализ
                 data = pytesseract.image_to_data(
@@ -310,13 +303,7 @@ class OptimizedServerSelector:
 
         return unique_numbers
 
-    def _save_debug_image(self, image, prefix):
-        """Сохранение отладочного изображения."""
-        import os
-        debug_dir = "debug_ocr"
-        os.makedirs(debug_dir, exist_ok=True)
-        timestamp = int(time.time())
-        cv2.imwrite(f"{debug_dir}/{prefix}_{timestamp}.png", image)
+    # Убираем метод _save_debug_image так как он больше не нужен
 
     def find_server_coordinates(self, server_id: int, attempts: int = 1) -> Optional[Tuple[int, int]]:
         """
@@ -331,10 +318,7 @@ class OptimizedServerSelector:
         """
         for attempt in range(attempts):
             # Принудительно обновляем данные только на первой попытке
-            servers_dict = self.get_servers_with_coordinates(
-                debug_save=(attempt == 0),
-                force_refresh=(attempt == 0)
-            )
+            servers_dict = self.get_servers_with_coordinates(force_refresh=(attempt == 0))
 
             # Прямой поиск целевого сервера
             if server_id in servers_dict:
