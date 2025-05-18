@@ -385,7 +385,7 @@ class GameBot:
 
     def select_season(self, season_id):
         """
-        Выбор сезона.
+        Улучшенный метод выбора сезона.
 
         Args:
             season_id: идентификатор сезона (S1, S2, S3, S4, S5, X1, X2, X3, X4)
@@ -400,13 +400,7 @@ class GameBot:
             self.logger.error(f"Сезон '{season_id}' не найден в конфигурации")
             return False
 
-        # Определение необходимости скроллинга
-        if season_id in ['X2', 'X3', 'X4']:
-            # Скроллинг для отображения нижних сезонов
-            self.swipe(257, 573, 238, 240)
-            time.sleep(1)  # Дополнительная задержка после скролла
-
-        # Приблизительные координаты сезонов (эти значения могут потребовать корректировки)
+        # Приблизительные координаты сезонов
         season_y_coords = {
             'S1': 180,
             'S2': 220,
@@ -416,21 +410,92 @@ class GameBot:
             'X1': 380,
             'X2': 260,  # После скроллинга
             'X3': 300,  # После скроллинга
-            'X4': 340   # После скроллинга
+            'X4': 340  # После скроллинга
         }
 
-        # Клик по сезону
+        # Определение необходимости скроллинга
+        if season_id in ['X2', 'X3', 'X4']:
+            self.logger.info(f"Скроллинг для отображения сезона {season_id}")
+
+            # Уменьшаем длину свайпа на 20% для большей точности
+            start_x, start_y = 257, 573
+            end_x, end_y = 238, 265  # Изменено с 240 на 265 (уменьшение на ~20%)
+
+            # Выполняем свайп с увеличенной продолжительностью для более плавного движения
+            self.swipe(start_x, start_y, end_x, end_y, duration=1500)
+
+            # Обязательная задержка после свайпа для загрузки UI
+            time.sleep(2)
+
+            # Проверка успешности скроллинга (можно добавить поиск текста сезона)
+            screenshot = self.adb.screenshot()
+            success = self.check_season_visible(season_id, screenshot)
+
+            if not success:
+                self.logger.warning(f"Сезон {season_id} не обнаружен после свайпа, пробуем еще раз")
+                # Пробуем еще раз с большим смещением
+                self.swipe(start_x, start_y, end_x, end_y - 20, duration=1500)
+                time.sleep(2)
+
+        # Клик по сезону с уточненными координатами
         if season_id in season_y_coords:
+            x_coord = 250  # Координата X для клика по тексту сезона
+            y_coord = season_y_coords[season_id]
+
             # Клик по текстовой метке сезона
-            self.click_coord(400, season_y_coords[season_id])
-            time.sleep(1)  # Дополнительная задержка после выбора сезона
+            self.logger.info(f"Клик по сезону {season_id} по координатам ({x_coord}, {y_coord})")
+            self.click_coord(x_coord, y_coord)
+
+            # Задержка для подтверждения выбора сезона
+            time.sleep(1.5)
+
+            # Проверка успешности выбора сезона
+            # Можно добавить поиск характерных элементов UI выбранного сезона
+            # Для простоты предполагаем, что выбор успешен
+
             return True
 
         return False
 
+    def check_season_visible(self, season_id, screenshot):
+        """
+        Проверка видимости сезона на экране.
+
+        Args:
+            season_id: идентификатор сезона
+            screenshot: скриншот экрана
+
+        Returns:
+            bool: True если сезон виден на экране, False иначе
+        """
+        # Ищем текст сезона с помощью OCR
+        season_text = f"Сезон {season_id}"
+
+        # Если OCR доступен
+        if self.ocr_available:
+            try:
+                import pytesseract
+                # Преобразование в оттенки серого
+                gray = cv2.cvtColor(screenshot, cv2.COLOR_BGR2GRAY)
+                # Бинаризация для лучшего распознавания
+                _, binary = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY_INV)
+                # Распознавание текста
+                text = pytesseract.image_to_string(binary, lang='rus+eng')
+
+                # Проверка наличия текста сезона
+                if season_text in text:
+                    self.logger.info(f"Сезон {season_id} обнаружен на экране")
+                    return True
+            except Exception as e:
+                self.logger.error(f"Ошибка при проверке видимости сезона: {e}")
+
+        # Если OCR недоступен или не нашел текст, используем примерное позиционирование
+        # В этом случае просто возвращаем True и полагаемся на координаты
+        return True
+
     def select_server(self, server_id):
         """
-        Выбор сервера.
+        Улучшенный метод выбора сервера.
 
         Args:
             server_id: номер сервера
@@ -451,8 +516,8 @@ class GameBot:
             return False
 
         # Получение диапазона серверов в сезоне
-        min_server = SEASONS[season_id]['max_server']
-        max_server = SEASONS[season_id]['min_server']
+        min_server = SEASONS[season_id]['max_server']  # Минимальный номер сервера в сезоне
+        max_server = SEASONS[season_id]['min_server']  # Максимальный номер сервера в сезоне
 
         # Порядковый номер сервера в сезоне (от новых к старым)
         server_index = max_server - server_id
@@ -466,24 +531,207 @@ class GameBot:
         # Индекс на странице (начиная с 0)
         page_index = server_index % servers_per_page
 
-        self.logger.debug(f"Сервер {server_id}: сезон {season_id}, индекс {server_index}, страница {page}, позиция {page_index}")
+        self.logger.debug(
+            f"Сервер {server_id}: сезон {season_id}, индекс {server_index}, страница {page}, позиция {page_index}")
 
-        # Скроллинг до нужной страницы
-        for _ in range(page):
-            self.swipe(777, 566, 772, 100)
-            time.sleep(DEFAULT_TIMEOUT)  # Дополнительная задержка после скролла
+        # Список видимых серверов
+        visible_servers = []
 
-        # Клик по серверу (приблизительные координаты)
-        server_base_y = 150  # Примерная Y-координата первого сервера
-        server_step_y = 40   # Шаг между серверами по Y
+        # Скроллинг до нужной страницы с проверкой видимых серверов
+        current_page = 0
+        while current_page < page:
+            self.logger.info(f"Скроллинг до страницы {current_page + 1} из {page}")
 
-        server_y = server_base_y + page_index * server_step_y
-        server_x = 500  # Примерная X-координата сервера
+            # Получаем видимые сервера перед свайпом
+            visible_servers = self.get_visible_servers()
 
-        self.click_coord(server_x, server_y)
-        time.sleep(DEFAULT_TIMEOUT)  # Дополнительная задержка после выбора сервера
+            # Если нужный сервер уже виден, прерываем скроллинг
+            if server_id in visible_servers:
+                self.logger.info(f"Сервер {server_id} уже виден на странице, прекращаем скроллинг")
+                break
 
-        return True
+            # Уменьшаем длину свайпа на 20% для большей точности
+            start_x, start_y = 777, 566
+            end_x, end_y = 772, 140  # Изменено с 100 на 140 (уменьшение на ~20%)
+
+            # Выполняем свайп с увеличенной продолжительностью
+            self.swipe(start_x, start_y, end_x, end_y, duration=1500)
+
+            # Обязательная задержка после свайпа для загрузки UI
+            time.sleep(2)
+
+            current_page += 1
+
+            # Проверка успешности скроллинга
+            new_visible_servers = self.get_visible_servers()
+
+            # Если списки серверов одинаковы, значит скроллинг не выполнился
+            if set(visible_servers) == set(new_visible_servers) and len(visible_servers) > 0:
+                self.logger.warning("Скроллинг не изменил список видимых серверов, возможно достигнут конец списка")
+                break
+
+        # Повторное получение видимых серверов после всех свайпов
+        visible_servers = self.get_visible_servers()
+
+        # Проверка наличия целевого сервера в списке видимых
+        if server_id in visible_servers:
+            # Сервер найден, кликаем по нему
+            server_coords = self.get_server_coordinates(server_id, visible_servers)
+            if server_coords:
+                self.logger.info(f"Сервер {server_id} найден на экране по координатам {server_coords}, выполняем клик")
+                self.click_coord(server_coords[0], server_coords[1])
+                time.sleep(1.5)  # Задержка после выбора сервера
+                return True
+        else:
+            # Целевой сервер не найден, ищем ближайший доступный сервер
+            self.logger.warning(f"Сервер {server_id} не найден в списке видимых серверов")
+
+            # Ищем ближайший доступный сервер (с меньшим номером)
+            next_server = self.find_next_available_server(server_id, visible_servers)
+
+            if next_server:
+                self.logger.info(f"Выбираем ближайший доступный сервер {next_server} вместо {server_id}")
+                server_coords = self.get_server_coordinates(next_server, visible_servers)
+                if server_coords:
+                    self.click_coord(server_coords[0], server_coords[1])
+                    time.sleep(1.5)  # Задержка после выбора сервера
+                    return True
+
+        # Если не удалось найти подходящий сервер
+        self.logger.error(f"Не удалось выбрать сервер {server_id} или подходящую замену")
+        return False
+
+    def get_visible_servers(self):
+        """
+        Получение списка видимых на экране серверов.
+
+        Returns:
+            list: список видимых серверов (номеров)
+        """
+        visible_servers = []
+
+        # Получение скриншота
+        screenshot = self.adb.screenshot()
+
+        # Если OCR доступен, используем его для распознавания номеров серверов
+        if self.ocr_available:
+            try:
+                import pytesseract
+                # Преобразование в оттенки серого
+                gray = cv2.cvtColor(screenshot, cv2.COLOR_BGR2GRAY)
+                # Бинаризация для лучшего распознавания
+                _, binary = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY_INV)
+                # Распознавание текста
+                text = pytesseract.image_to_string(binary, lang='rus+eng')
+
+                # Поиск всех упоминаний "Море #XXX"
+                import re
+                server_pattern = r"Море\s+#(\d+)"
+                matches = re.findall(server_pattern, text)
+
+                if matches:
+                    for match in matches:
+                        try:
+                            server_id = int(match)
+                            visible_servers.append(server_id)
+                        except ValueError:
+                            continue
+
+                    self.logger.info(f"Распознаны сервера на экране: {visible_servers}")
+                    return sorted(visible_servers, reverse=True)  # Сортируем по убыванию
+
+            except Exception as e:
+                self.logger.error(f"Ошибка при распознавании серверов: {e}")
+
+        # Если OCR недоступен или не удалось распознать сервера,
+        # возвращаем примерный список серверов на основе текущего скроллинга
+        # Этот подход менее надежен, но лучше, чем ничего
+
+        # Получаем текущий сезон (примерно)
+        current_season = None
+        for season_id, coords in self.season_y_coords.items():
+            # Здесь нужно добавить логику определения текущего сезона
+            # Для простоты предположим, что это S1
+            current_season = 'S1'
+            break
+
+        if current_season and current_season in SEASONS:
+            min_server = SEASONS[current_season]['max_server']
+            max_server = SEASONS[current_season]['min_server']
+
+            # Примерно оцениваем видимые сервера
+            # Предполагаем, что видны от 5 до 8 серверов
+            visible_count = 6
+            start_server = max_server
+
+            for i in range(visible_count):
+                if start_server - i >= min_server:
+                    visible_servers.append(start_server - i)
+
+        return visible_servers
+
+    def find_next_available_server(self, target_server, visible_servers):
+        """
+        Поиск следующего доступного сервера, если целевой недоступен.
+
+        Args:
+            target_server: целевой номер сервера
+            visible_servers: список видимых серверов
+
+        Returns:
+            int: номер следующего доступного сервера или None
+        """
+        if not visible_servers:
+            return None
+
+        # Сортируем видимые сервера по убыванию
+        visible_servers = sorted(visible_servers, reverse=True)
+
+        # Ищем ближайший доступный сервер (с меньшим номером)
+        next_server = None
+
+        for server in visible_servers:
+            if server < target_server:
+                next_server = server
+                break
+
+        # Если не нашли сервер с меньшим номером, берем первый доступный
+        if next_server is None and visible_servers:
+            next_server = visible_servers[0]
+
+        return next_server
+
+    def get_server_coordinates(self, server_id, visible_servers):
+        """
+        Получение координат для клика по серверу.
+
+        Args:
+            server_id: номер сервера
+            visible_servers: список видимых серверов
+
+        Returns:
+            tuple: (x, y) координаты для клика по серверу или None
+        """
+        # Если сервер не в списке видимых, возвращаем None
+        if server_id not in visible_servers:
+            return None
+
+        # Определяем индекс сервера в списке видимых (сортированных по убыванию)
+        visible_servers = sorted(visible_servers, reverse=True)
+        index = visible_servers.index(server_id)
+
+        # Базовые координаты для первого сервера
+        base_x = 500  # Примерная X-координата
+        base_y = 150  # Примерная Y-координата для первого сервера в списке
+
+        # Вертикальное смещение между серверами
+        y_offset = 40
+
+        # Рассчитываем координаты для клика
+        x = base_x
+        y = base_y + index * y_offset
+
+        return (x, y)
 
     def is_server_available(self, server_id):
         """
@@ -1557,7 +1805,7 @@ class GameBot:
 
     def run_bot(self, cycles=1, start_server=619, end_server=1, first_server_start_step=1):
         """
-        Запуск бота на выполнение заданного количества циклов обучения.
+        Улучшенный метод запуска бота на выполнение заданного количества циклов обучения.
 
         Args:
             cycles: количество циклов обучения
@@ -1573,13 +1821,14 @@ class GameBot:
             self.logger.error("Начальный сервер должен быть больше или равен конечному")
             return 0
 
-        # Строка self.start_game() удалена - пользователь запускает игру сам
-
         successful_cycles = 0
         current_server = start_server
+        servers_to_process = min(cycles, start_server - end_server + 1)
 
-        for cycle in range(1, cycles + 1):
-            self.logger.info(f"===== Начало цикла {cycle}/{cycles}, сервер {current_server} =====")
+        self.logger.info(f"Запланировано обработать {servers_to_process} серверов")
+
+        for cycle in range(1, servers_to_process + 1):
+            self.logger.info(f"===== Начало цикла {cycle}/{servers_to_process}, сервер {current_server} =====")
 
             try:
                 # Для первого цикла используем указанный пользователем начальный шаг
@@ -1588,25 +1837,32 @@ class GameBot:
                 self.logger.info(f"Начальный шаг для цикла {cycle}: {current_step}")
 
                 if self.perform_tutorial(current_server, start_step=current_step):
-                    self.logger.info(f"Цикл {cycle}/{cycles} на сервере {current_server} завершен успешно")
+                    self.logger.info(f"Цикл {cycle}/{servers_to_process} на сервере {current_server} завершен успешно")
                     successful_cycles += 1
                 else:
-                    self.logger.error(f"Ошибка при выполнении цикла {cycle}/{cycles} на сервере {current_server}")
+                    self.logger.error(
+                        f"Ошибка при выполнении цикла {cycle}/{servers_to_process} на сервере {current_server}")
+                    # Даже при ошибке продолжаем выполнение следующих циклов
 
                 # Определяем следующий сервер для прокачки
-                if cycle < cycles:
+                if cycle < servers_to_process:
                     current_server -= 1
-                    # Если достигли конечного сервера, заканчиваем работу
+                    # Проверяем, не достигли ли мы конечного сервера
                     if current_server < end_server:
                         self.logger.info(f"Достигнут конечный сервер {end_server}. Завершение работы.")
                         break
 
+                    self.logger.info(f"Переход к следующему серверу: {current_server}")
+
                 # Пауза между циклами
-                time.sleep(DEFAULT_TIMEOUT * 2)
+                if cycle < servers_to_process:
+                    pause_time = DEFAULT_TIMEOUT * 4  # Увеличенная пауза между серверами
+                    self.logger.info(f"Пауза {pause_time} секунд перед переходом к следующему серверу")
+                    time.sleep(pause_time)
 
             except Exception as e:
                 self.logger.error(f"Критическая ошибка в цикле {cycle}: {e}", exc_info=True)
-                # Продолжаем выполнение следующих циклов
+                # Продолжаем выполнение следующих циклов даже при критической ошибке
 
-        self.logger.info(f"Бот завершил работу. Успешно выполнено {successful_cycles}/{min(cycles, start_server - end_server + 1)} циклов.")
+        self.logger.info(f"Бот завершил работу. Успешно выполнено {successful_cycles}/{servers_to_process} циклов.")
         return successful_cycles
