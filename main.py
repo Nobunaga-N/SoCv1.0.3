@@ -11,7 +11,7 @@ from pathlib import Path
 from logger import setup_logger
 from adb_controller import ADBController
 from image_handler import ImageHandler
-from game_bot import GameBot
+from game_bot import OptimizedGameBot
 
 def parse_arguments():
     """
@@ -184,7 +184,7 @@ def main():
         image_handler = ImageHandler(adb_controller)
 
         # Создание бота
-        game_bot = GameBot(adb_controller, image_handler)
+        game_bot = OptimizedGameBot(adb_controller, image_handler)
 
         # Запуск бота на выполнение заданного количества циклов
         logger.info(f"Запуск бота на {args.cycles} циклов с серверами от {start_server} до {end_server}")
