@@ -11,7 +11,7 @@ from typing import Optional, Tuple, List
 from config import (
     IMAGE_PATHS, COORDINATES, SEASONS, DEFAULT_TIMEOUT, LOADING_TIMEOUT,
     GAME_PACKAGE, GAME_ACTIVITY, TEMPLATE_MATCHING_THRESHOLD,
-    OCR_REGIONS, PAUSE_SETTINGS, SERVER_RECOGNITION_SETTINGS
+    OCR_REGIONS, PAUSE_SETTINGS, SERVER_RECOGNITION_SETTINGS, SKIP_BUTTON_VARIANTS
 )
 from server_selector import OptimizedServerSelector
 
@@ -463,177 +463,450 @@ class OptimizedGameBot:
     # Специализированные методы для обучения
     def find_skip_button_infinite(self) -> bool:
         """
-        Бесконечный поиск кнопки ПРОПУСТИТЬ только через OCR с разными методами обработки.
-        Не останавливается пока кнопка не будет найдена и нажата.
+        Улучшенный бесконечный поиск кнопки ПРОПУСТИТЬ с множественными методами OCR.
+        Заменяет существующий метод с тем же названием.
 
         Returns:
-            bool: всегда True (когда кнопка найдена)
+            bool: True когда кнопка найдена и нажата
         """
-        self.logger.info("Начинаем бесконечный поиск кнопки ПРОПУСТИТЬ через OCR")
+        self.logger.info("Запуск улучшенного бесконечного поиска ПРОПУСТИТЬ")
 
-        skip_variants = [
-            "ПРОПУСТИТЬ", "ПРОПУСТИTЬ", "ПРОNYСТИТЬ", "ПPОПУСТИТЬ",
-            "ПРОПУCTИТЬ", "ПРOПУСТИТЬ", "ПPOПУСТИТЬ", "SKIP",
-            "ПРОПYСТИТЬ", "ПРОПУСТИTЬ", "ПРОПУСТИТЬ", "ПРОПУСТИTь",
-            "ПРОПУСТИТЬ >>", "ПРОПУСТИТЬ>", "ПРОПУСТИТЬ >", ">>",
-            "ПРОПУCTИТЬ >>", "ПРOПУСТИТЬ >>", "ПРОПУСТИTЬ >>"
-        ]
-
-        region = OCR_REGIONS['skip_button']
         attempt = 0
-        log_interval = 20  # Логируем каждые 20 попыток
+        log_interval = 15  # Логируем каждые 15 попыток
 
         while True:
             attempt += 1
 
-            # Логируем прогресс каждые N попыток
             if attempt % log_interval == 1:
                 self.logger.info(f"Попытка поиска ПРОПУСТИТЬ #{attempt}")
 
             try:
-                screenshot = self.adb.screenshot()
-                if screenshot is None or screenshot.size == 0:
-                    self.logger.debug("Пустой скриншот, повторяем")
-                    time.sleep(0.5)
-                    continue
-
-                # Получаем область поиска
-                x, y, w, h = region
-                roi = screenshot[y:y + h, x:x + w]
-
-                # Метод 1: Стандартная бинаризация (белый текст на темном фоне)
-                result = self._ocr_method_binary_white_text(roi, skip_variants, attempt)
-                if result:
-                    coords = (x + result[0], y + result[1])
-                    self.click_coord(coords[0], coords[1])
-                    self.logger.info(f"ПРОПУСТИТЬ найден методом 1 (бинаризация белого текста) на попытке #{attempt}")
-                    return True
-
-                # Метод 2: Инвертированная бинаризация (темный текст на светлом фоне)
-                result = self._ocr_method_binary_dark_text(roi, skip_variants, attempt)
-                if result:
-                    coords = (x + result[0], y + result[1])
-                    self.click_coord(coords[0], coords[1])
-                    self.logger.info(f"ПРОПУСТИТЬ найден методом 2 (бинаризация темного текста) на попытке #{attempt}")
-                    return True
-
-                # Метод 3: Специальный метод для полупрозрачных кнопок
-                result = self._ocr_method_transparent_buttons(roi, skip_variants, attempt)
-                if result:
-                    coords = (x + result[0], y + result[1])
-                    self.click_coord(coords[0], coords[1])
-                    self.logger.info(f"ПРОПУСТИТЬ найден методом 3 (полупрозрачные кнопки) на попытке #{attempt}")
-                    return True
-
-                # Метод 4: Поиск по цвету (выделение определенных цветовых диапазонов)
-                result = self._ocr_method_color_filtering(roi, skip_variants, attempt)
-                if result:
-                    coords = (x + result[0], y + result[1])
-                    self.click_coord(coords[0], coords[1])
-                    self.logger.info(f"ПРОПУСТИТЬ найден методом 4 (цветовая фильтрация) на попытке #{attempt}")
-                    return True
-
-                # Метод 5: Контрастное усиление
-                result = self._ocr_method_contrast_enhancement(roi, skip_variants, attempt)
-                if result:
-                    coords = (x + result[0], y + result[1])
-                    self.click_coord(coords[0], coords[1])
-                    self.logger.info(f"ПРОПУСТИТЬ найден методом 5 (контрастное усиление) на попытке #{attempt}")
-                    return True
-
-                # Метод 6: Двойная проверка (комбинированный метод)
-                result = self._ocr_method_double_check(roi, skip_variants, attempt)
-                if result:
-                    coords = (x + result[0], y + result[1])
-                    self.click_coord(coords[0], coords[1])
-                    self.logger.info(f"ПРОПУСТИТЬ найден методом 6 (двойная проверка) на попытке #{attempt}")
-                    return True
-
-                # Метод 7: Расширенная область поиска (каждые 10 попыток)
-                if attempt % 10 == 0:
-                    expanded_region = (max(0, x - 50), max(0, y - 20),
-                                       min(screenshot.shape[1] - x, w + 100),
-                                       min(screenshot.shape[0] - y, h + 40))
-                    exp_x, exp_y, exp_w, exp_h = expanded_region
-                    expanded_roi = screenshot[exp_y:exp_y + exp_h, exp_x:exp_x + exp_w]
-
-                    result = self._ocr_method_binary_white_text(expanded_roi, skip_variants, attempt)
-                    if result:
-                        coords = (exp_x + result[0], exp_y + result[1])
-                        self.click_coord(coords[0], coords[1])
-                        self.logger.info(f"ПРОПУСТИТЬ найден методом 7 (расширенная область) на попытке #{attempt}")
+                # Каждые 5 попыток используем продвинутый поиск по всем областям
+                if attempt % 5 == 0:
+                    if self._find_skip_with_advanced_ocr():
+                        self.logger.info(f"ПРОПУСТИТЬ найден продвинутым методом на попытке #{attempt}")
+                        return True
+                else:
+                    # Быстрый поиск в основной области
+                    if self._find_skip_quick_search():
+                        self.logger.info(f"ПРОПУСТИТЬ найден быстрым методом на попытке #{attempt}")
                         return True
 
             except Exception as e:
                 self.logger.debug(f"Ошибка в попытке #{attempt}: {e}")
 
-            # Пауза между попытками
+            # Короткая пауза между попытками
             time.sleep(0.3)
 
-    def _ocr_method_binary_white_text(self, roi, skip_variants, attempt):
-        """OCR метод: бинаризация для белого текста на темном фоне."""
+    def _find_skip_with_advanced_ocr(self) -> bool:
+        """
+        Продвинутый поиск кнопки ПРОПУСТИТЬ с множественными методами обработки
+        и расширенным поиском по областям.
+        """
+        from config import OCR_REGIONS, SKIP_BUTTON_VARIANTS
+
+        # Список областей для поиска (от узкой к широкой)
+        search_regions = [
+            OCR_REGIONS['skip_button'],  # Основная область
+            OCR_REGIONS['skip_button_extended'],  # Расширенная область
+            (700, 0, 580, 150),  # Очень широкая область правого верха
+        ]
+
+        # Получаем скриншот один раз
+        screenshot = self.adb.screenshot()
+        if screenshot is None or screenshot.size == 0:
+            return False
+
+        # Пробуем разные области поиска
+        for region_idx, region in enumerate(search_regions):
+            x, y, w, h = region
+            # Проверяем границы
+            x = max(0, x)
+            y = max(0, y)
+            w = min(screenshot.shape[1] - x, w)
+            h = min(screenshot.shape[0] - y, h)
+
+            if w <= 0 or h <= 0:
+                continue
+
+            roi = screenshot[y:y + h, x:x + w]
+
+            # Применяем все методы обработки для этой области
+            for method_name, method_func in self._get_ocr_methods().items():
+                result = method_func(roi, SKIP_BUTTON_VARIANTS)
+                if result:
+                    coords = (x + result[0], y + result[1])
+                    self.click_coord(coords[0], coords[1])
+                    self.logger.info(f"ПРОПУСТИТЬ найден {method_name} в области {region_idx + 1}")
+                    return True
+
+        return False
+
+    def _find_skip_quick_search(self) -> bool:
+        """Быстрый поиск только в основной области с базовыми методами."""
+        from config import OCR_REGIONS, SKIP_BUTTON_VARIANTS
+
+        screenshot = self.adb.screenshot()
+        if screenshot is None or screenshot.size == 0:
+            return False
+
+        # Поиск только в основной области
+        region = OCR_REGIONS['skip_button']
+        x, y, w, h = region
+        roi = screenshot[y:y + h, x:x + w]
+
+        # Пробуем только самые эффективные методы для скорости
+        result = self._ocr_method_inverted_binary(roi, SKIP_BUTTON_VARIANTS)
+        if result:
+            coords = (x + result[0], y + result[1])
+            self.click_coord(coords[0], coords[1])
+            return True
+
+        result = self._ocr_method_standard_binary(roi, SKIP_BUTTON_VARIANTS)
+        if result:
+            coords = (x + result[0], y + result[1])
+            self.click_coord(coords[0], coords[1])
+            return True
+
+        return False
+
+    def _get_ocr_methods(self):
+        """Возвращает словарь всех доступных методов OCR обработки."""
+        return {
+            'standard_binary': self._ocr_method_standard_binary,
+            'inverted_binary': self._ocr_method_inverted_binary,
+            'adaptive_threshold': self._ocr_method_adaptive_threshold,
+            'multi_threshold': self._ocr_method_multi_threshold,
+            'contrast_enhanced': self._ocr_method_contrast_enhanced,
+            'morphological': self._ocr_method_morphological,
+            'color_isolation': self._ocr_method_color_isolation,
+            'edge_detection': self._ocr_method_edge_detection,
+        }
+
+    def _ocr_method_standard_binary(self, roi, variants):
+        """Стандартная бинаризация с оптимизированными параметрами."""
+        try:
+            import pytesseract
+            gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+
+            # Попробуем несколько порогов
+            thresholds = [120, 150, 180, 200]
+            for threshold in thresholds:
+                _, binary = cv2.threshold(gray, threshold, 255, cv2.THRESH_BINARY)
+                result = self._process_with_tesseract(binary, variants, scale=2)
+                if result:
+                    return result
+            return None
+        except:
+            return None
+
+    def _ocr_method_inverted_binary(self, roi, variants):
+        """Инвертированная бинаризация для светлого текста на темном фоне."""
+        try:
+            import pytesseract
+            gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+
+            thresholds = [120, 150, 180]
+            for threshold in thresholds:
+                _, binary = cv2.threshold(gray, threshold, 255, cv2.THRESH_BINARY_INV)
+                result = self._process_with_tesseract(binary, variants, scale=2)
+                if result:
+                    return result
+            return None
+        except:
+            return None
+
+    def _ocr_method_adaptive_threshold(self, roi, variants):
+        """Адаптивная пороговая обработка."""
+        try:
+            import pytesseract
+            gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+
+            # Разные параметры адаптивной пороговой обработки
+            configs = [
+                (cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 11, 2),
+                (cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 15, 5),
+                (cv2.ADAPTIVE_THRESH_MEAN_C, 11, 2),
+                (cv2.ADAPTIVE_THRESH_MEAN_C, 15, 5),
+            ]
+
+            for method, block_size, c in configs:
+                binary = cv2.adaptiveThreshold(gray, 255, method, cv2.THRESH_BINARY, block_size, c)
+                result = self._process_with_tesseract(binary, variants, scale=2)
+                if result:
+                    return result
+
+                # Попробуем инвертированную версию
+                binary_inv = cv2.adaptiveThreshold(gray, 255, method, cv2.THRESH_BINARY_INV, block_size, c)
+                result = self._process_with_tesseract(binary_inv, variants, scale=2)
+                if result:
+                    return result
+            return None
+        except:
+            return None
+
+    def _ocr_method_multi_threshold(self, roi, variants):
+        """Множественная пороговая обработка с комбинированием результатов."""
+        try:
+            import pytesseract
+            gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+
+            # Создаем несколько бинарных изображений с разными порогами
+            _, binary1 = cv2.threshold(gray, 120, 255, cv2.THRESH_BINARY)
+            _, binary2 = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
+            _, binary3 = cv2.threshold(gray, 180, 255, cv2.THRESH_BINARY)
+
+            # Комбинируем результаты
+            combined = cv2.bitwise_or(cv2.bitwise_or(binary1, binary2), binary3)
+
+            result = self._process_with_tesseract(combined, variants, scale=2)
+            if result:
+                return result
+
+            # Попробуем инвертированную версию
+            combined_inv = cv2.bitwise_not(combined)
+            result = self._process_with_tesseract(combined_inv, variants, scale=2)
+            return result
+        except:
+            return None
+
+    def _ocr_method_contrast_enhanced(self, roi, variants):
+        """Улучшение контраста с помощью CLAHE."""
+        try:
+            import pytesseract
+            gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+
+            # Разные параметры CLAHE
+            clahe_configs = [
+                (2.0, (8, 8)),
+                (3.0, (8, 8)),
+                (4.0, (8, 8)),
+                (2.0, (16, 16)),
+            ]
+
+            for clip_limit, tile_grid_size in clahe_configs:
+                clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
+                enhanced = clahe.apply(gray)
+
+                # Пробуем разные пороги на улучшенном изображении
+                for threshold in [130, 160, 190]:
+                    _, binary = cv2.threshold(enhanced, threshold, 255, cv2.THRESH_BINARY)
+                    result = self._process_with_tesseract(binary, variants, scale=2)
+                    if result:
+                        return result
+
+                    _, binary_inv = cv2.threshold(enhanced, threshold, 255, cv2.THRESH_BINARY_INV)
+                    result = self._process_with_tesseract(binary_inv, variants, scale=2)
+                    if result:
+                        return result
+            return None
+        except:
+            return None
+
+    def _ocr_method_morphological(self, roi, variants):
+        """Морфологическая обработка для очистки изображения."""
         try:
             import pytesseract
             gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
             _, binary = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
 
-            data = pytesseract.image_to_data(binary, output_type=pytesseract.Output.DICT,
-                                             lang='rus+eng', config='--psm 6')
+            # Разные ядра для морфологических операций
+            kernels = [
+                np.ones((2, 2), np.uint8),
+                np.ones((3, 3), np.uint8),
+                cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)),
+                cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)),
+            ]
 
-            return self._parse_ocr_data_with_validation(data, skip_variants)
+            for kernel in kernels:
+                # Закрытие (убирает дыры в символах)
+                closed = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+                result = self._process_with_tesseract(closed, variants, scale=2)
+                if result:
+                    return result
+
+                # Открытие (убирает шум)
+                opened = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
+                result = self._process_with_tesseract(opened, variants, scale=2)
+                if result:
+                    return result
+            return None
         except:
             return None
 
-    def _ocr_method_binary_dark_text(self, roi, skip_variants, attempt):
-        """OCR метод: инвертированная бинаризация для темного текста на светлом фоне."""
+    def _ocr_method_color_isolation(self, roi, variants):
+        """Изоляция определенных цветов для улучшения распознавания."""
+        try:
+            import pytesseract
+
+            # Преобразуем в HSV для лучшей работы с цветами
+            hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+
+            # Диапазоны для белого/светлого текста
+            white_ranges = [
+                ([0, 0, 180], [255, 30, 255]),  # Белый
+                ([0, 0, 200], [255, 50, 255]),  # Очень светлый
+                ([0, 0, 150], [255, 40, 255]),  # Светло-серый
+            ]
+
+            for lower, upper in white_ranges:
+                lower = np.array(lower)
+                upper = np.array(upper)
+                mask = cv2.inRange(hsv, lower, upper)
+
+                result = self._process_with_tesseract(mask, variants, scale=2)
+                if result:
+                    return result
+
+            # Попробуем также с RGB
+            # Выделяем светлые пиксели
+            gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+            light_mask = gray > 180
+            light_binary = np.where(light_mask, 255, 0).astype(np.uint8)
+
+            result = self._process_with_tesseract(light_binary, variants, scale=2)
+            return result
+        except:
+            return None
+
+    def _ocr_method_edge_detection(self, roi, variants):
+        """Метод с выделением границ символов."""
         try:
             import pytesseract
             gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-            _, binary = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY_INV)
 
-            data = pytesseract.image_to_data(binary, output_type=pytesseract.Output.DICT,
-                                             lang='rus+eng', config='--psm 6')
+            # Разные параметры для Canny
+            canny_configs = [
+                (50, 150),
+                (30, 100),
+                (100, 200),
+            ]
 
-            return self._parse_ocr_data_with_validation(data, skip_variants)
+            for low, high in canny_configs:
+                edges = cv2.Canny(gray, low, high)
+
+                # Дилатация для соединения разорванных линий
+                kernel = np.ones((2, 2), np.uint8)
+                dilated = cv2.dilate(edges, kernel, iterations=1)
+
+                result = self._process_with_tesseract(dilated, variants, scale=2)
+                if result:
+                    return result
+            return None
         except:
             return None
 
-    def _ocr_method_double_check(self, roi, skip_variants, attempt):
-        """OCR метод: двойная проверка - комбинирует несколько надежных методов."""
+    def _process_with_tesseract(self, processed_image, variants, scale=1):
+        """
+        Обработка изображения с помощью Tesseract с увеличением размера.
+
+        Args:
+            processed_image: обработанное изображение
+            variants: список вариантов текста для поиска
+            scale: коэффициент увеличения изображения
+
+        Returns:
+            tuple: (x, y) координаты центра найденного текста или None
+        """
         try:
             import pytesseract
-            gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+            import re
 
-            # Метод 1: Стандартная бинаризация
-            _, binary1 = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
-            data1 = pytesseract.image_to_data(binary1, output_type=pytesseract.Output.DICT,
-                                              lang='rus+eng', config='--psm 6')
-            result1 = self._parse_ocr_data_with_validation(data1, skip_variants)
+            # Увеличиваем изображение для лучшего распознавания
+            if scale > 1:
+                h, w = processed_image.shape
+                processed_image = cv2.resize(processed_image, (w * scale, h * scale),
+                                             interpolation=cv2.INTER_CUBIC)
 
-            # Метод 2: Инвертированная бинаризация
-            _, binary2 = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY_INV)
-            data2 = pytesseract.image_to_data(binary2, output_type=pytesseract.Output.DICT,
-                                              lang='rus+eng', config='--psm 6')
-            result2 = self._parse_ocr_data_with_validation(data2, skip_variants)
+            # Разные конфигурации PSM для Tesseract
+            psm_configs = [
+                '--psm 6',  # Uniform block of text
+                '--psm 8',  # Single word
+                '--psm 7',  # Single text line
+                '--psm 13',  # Raw line
+            ]
 
-            # Если оба метода нашли текст в похожих местах - это надежный результат
-            if result1 and result2:
-                # Проверяем, что координаты близко (в пределах 50 пикселей)
-                if abs(result1[0] - result2[0]) <= 50 and abs(result1[1] - result2[1]) <= 50:
-                    # Возвращаем среднее значение координат
-                    avg_x = (result1[0] + result2[0]) // 2
-                    avg_y = (result1[1] + result2[1]) // 2
-                    return (avg_x, avg_y)
+            for psm in psm_configs:
+                try:
+                    config = f"{psm} -c tessedit_char_whitelist=АБВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдежзийклмнопрстуфхцчшщъыьэюяABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789>»"
 
-            # Если только один метод нашел - возвращаем его (но с меньшей уверенностью)
-            if result1:
-                return result1
-            if result2:
-                return result2
+                    data = pytesseract.image_to_data(processed_image, output_type=pytesseract.Output.DICT,
+                                                     lang='rus+eng', config=config)
+
+                    result = self._parse_tesseract_results(data, variants, scale)
+                    if result:
+                        return result
+                except:
+                    continue
 
             return None
         except:
             return None
+
+    def _parse_tesseract_results(self, data, variants, scale):
+        """
+        Парсинг результатов Tesseract с интеллектуальным поиском.
+
+        Args:
+            data: данные от Tesseract
+            variants: список вариантов для поиска
+            scale: коэффициент масштабирования
+
+        Returns:
+            tuple: (x, y) координаты центра или None
+        """
+        import re
+
+        # Собираем все найденные тексты с их координатами
+        found_texts = []
+        for i in range(len(data['text'])):
+            text = data['text'][i].strip()
+            confidence = int(data['conf'][i])
+
+            if confidence >= 30 and len(text) >= 2:  # Минимальные требования
+                found_texts.append({
+                    'text': text.upper(),
+                    'confidence': confidence,
+                    'left': data['left'][i] // scale,
+                    'top': data['top'][i] // scale,
+                    'width': data['width'][i] // scale,
+                    'height': data['height'][i] // scale,
+                })
+
+        # Сначала ищем точные совпадения
+        for variant in variants:
+            variant_upper = variant.upper()
+            for item in found_texts:
+                if item['text'] == variant_upper:
+                    x = item['left'] + item['width'] // 2
+                    y = item['top'] + item['height'] // 2
+                    return (x, y)
+
+        # Затем ищем частичные совпадения для высокой уверенности
+        for variant in variants:
+            variant_upper = variant.upper()
+            # Убираем пробелы и специальные символы для более гибкого поиска
+            variant_clean = re.sub(r'[^А-ЯЁA-Z0-9]', '', variant_upper)
+
+            for item in found_texts:
+                if item['confidence'] >= 50:
+                    text_clean = re.sub(r'[^А-ЯЁA-Z0-9]', '', item['text'])
+
+                    # Проверяем вхождение (в обе стороны)
+                    if (variant_clean in text_clean or text_clean in variant_clean) and len(text_clean) >= 3:
+                        x = item['left'] + item['width'] // 2
+                        y = item['top'] + item['height'] // 2
+                        return (x, y)
+
+        # Особая обработка для стрелок ">>"
+        for item in found_texts:
+            text_clean = re.sub(r'[^>»]', '', item['text'])
+            if len(text_clean) >= 2:  # Найдено минимум 2 символа стрелки
+                x = item['left'] + item['width'] // 2
+                y = item['top'] + item['height'] // 2
+                return (x, y)
+
+        return None
 
     def _parse_ocr_data_with_validation(self, data, skip_variants):
         """Парсинг данных OCR с дополнительной валидацией."""
@@ -668,143 +941,6 @@ class OptimizedGameBot:
                         x = data['left'][i] + data['width'][i] // 2
                         y = data['top'][i] + data['height'][i] // 2
                         return (x, y)
-
-        return None
-
-    def _ocr_method_transparent_buttons(self, roi, skip_variants, attempt):
-        """OCR метод: специально для полупрозрачных кнопок с темным фоном."""
-        try:
-            import pytesseract
-
-            # Преобразуем в градации серого
-            gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-
-            # Метод 1: Выделение светлого текста на темном фоне с низким порогом
-            _, binary1 = cv2.threshold(gray, 120, 255, cv2.THRESH_BINARY)
-
-            # Метод 2: Выделение с более высоким порогом (для очень светлого текста)
-            _, binary2 = cv2.threshold(gray, 180, 255, cv2.THRESH_BINARY)
-
-            # Метод 3: Автоматический порог по методу Отцу
-            _, binary3 = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-
-            # Метод 4: Комбинированный - объединяем результаты
-            combined = cv2.bitwise_or(cv2.bitwise_or(binary1, binary2), binary3)
-
-            # Morfологическая обработка для очистки от шумов
-            kernel = np.ones((2, 2), np.uint8)
-            cleaned = cv2.morphologyEx(combined, cv2.MORPH_CLOSE, kernel)
-
-            # Увеличиваем изображение для лучшего распознавания
-            h, w = cleaned.shape
-            resized = cv2.resize(cleaned, (w * 2, h * 2), interpolation=cv2.INTER_CUBIC)
-
-            # OCR с более мягким PSM
-            data = pytesseract.image_to_data(resized, output_type=pytesseract.Output.DICT,
-                                             lang='rus+eng', config='--psm 8')
-
-            # Парсим результаты (с учетом масштабирования)
-            for i in range(len(data['text'])):
-                text = data['text'][i].strip().upper()
-                confidence = int(data['conf'][i])
-
-                # Для полупрозрачных кнопок используем более низкий порог уверенности
-                if confidence < 35:
-                    continue
-
-                # Проверяем каждый вариант
-                for variant in skip_variants:
-                    variant_upper = variant.upper()
-
-                    # Очень точная проверка для коротких вариантов типа ">>"
-                    if variant_upper == ">>" and ">>" in text:
-                        # Возвращаем координаты с учетом масштабирования
-                        x = (data['left'][i] + data['width'][i] // 2) // 2
-                        y = (data['top'][i] + data['height'][i] // 2) // 2
-                        return (x, y)
-
-                    # Обычная проверка
-                    if variant_upper in text or text in variant_upper:
-                        # Дополнительная проверка для избежания ложных срабатываний
-                        if len(text) >= 2:  # Минимум 2 символа
-                            # Возвращаем координаты с учетом масштабирования
-                            x = (data['left'][i] + data['width'][i] // 2) // 2
-                            y = (data['top'][i] + data['height'][i] // 2) // 2
-                            return (x, y)
-
-            return None
-        except:
-            return None
-        """OCR метод: фильтрация по цвету."""
-        try:
-            import pytesseract
-            # Преобразуем в HSV для лучшей работы с цветами
-            hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-
-            # Диапазон для белого/светлого текста
-            lower_white = np.array([0, 0, 180])
-            upper_white = np.array([255, 30, 255])
-
-            # Диапазон для желтого текста (часто используется для кнопок)
-            lower_yellow = np.array([20, 100, 100])
-            upper_yellow = np.array([30, 255, 255])
-
-            # Создаем маски
-            mask_white = cv2.inRange(hsv, lower_white, upper_white)
-            mask_yellow = cv2.inRange(hsv, lower_yellow, upper_yellow)
-            mask_combined = cv2.bitwise_or(mask_white, mask_yellow)
-
-            data = pytesseract.image_to_data(mask_combined, output_type=pytesseract.Output.DICT,
-                                             lang='rus+eng', config='--psm 6')
-
-            return self._parse_ocr_data(data, skip_variants)
-        except:
-            return None
-
-    def _ocr_method_contrast_enhancement(self, roi, skip_variants, attempt):
-        """OCR метод: улучшение контраста."""
-        try:
-            import pytesseract
-            gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-
-            # Улучшение контраста с помощью CLAHE
-            clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-            enhanced = clahe.apply(gray)
-
-            _, binary = cv2.threshold(enhanced, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-
-            data = pytesseract.image_to_data(binary, output_type=pytesseract.Output.DICT,
-                                             lang='rus+eng', config='--psm 6')
-
-            return self._parse_ocr_data(data, skip_variants)
-        except:
-            return None
-
-    def _parse_ocr_data(self, data, skip_variants):
-        """Парсинг данных OCR и поиск текста ПРОПУСТИТЬ с базовой валидацией."""
-        for i in range(len(data['text'])):
-            text = data['text'][i].strip().upper()
-            confidence = int(data['conf'][i])
-
-            # Повышенные требования к уверенности
-            if confidence < 40:
-                continue
-
-            # Проверяем каждый вариант
-            for variant in skip_variants:
-                variant_upper = variant.upper()
-
-                # Точное совпадение
-                if text == variant_upper:
-                    x = data['left'][i] + data['width'][i] // 2
-                    y = data['top'][i] + data['height'][i] // 2
-                    return (x, y)
-
-                # Частичное совпадение (только для высокой уверенности)
-                if confidence >= 60 and variant_upper in text:
-                    x = data['left'][i] + data['width'][i] // 2
-                    y = data['top'][i] + data['height'][i] // 2
-                    return (x, y)
 
         return None
 
